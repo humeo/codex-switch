@@ -1,0 +1,36 @@
+<svg width="742" height="655" viewBox="0 0 742 655" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="742" height="655" fill="#242437"/>
+  <text x="18" y="40" fill="#A8D5BA" font-family="'SFMono-Regular', Consolas, monospace" font-size="26">❯ ./codex-switch use</text>
+  <text x="12" y="72" fill="#D7D9E8" font-family="'SFMono-Regular', Consolas, monospace" font-size="28" font-weight="700">Select profile</text>
+  <text x="12" y="110" fill="#7D819F" font-family="'SFMono-Regular', Consolas, monospace" font-size="26">Choose the next active Codex profile</text>
+
+  <rect x="12" y="176" width="612" height="184" rx="6" stroke="#5E6170" stroke-width="2"/>
+  <text x="72" y="224" fill="#D7D9E8" font-family="'SFMono-Regular', Consolas, monospace" font-size="32" font-weight="700">xxx@gmail.com</text>
+  <rect x="360" y="196" width="136" height="36" fill="#8AA94E"/>
+  <text x="379" y="221" fill="#2B2F43" font-family="'SFMono-Regular', Consolas, monospace" font-size="26" font-weight="700">ACTIVE</text>
+  <rect x="496" y="196" width="102" height="36" fill="#63B3DD"/>
+  <text x="515" y="221" fill="#2B2F43" font-family="'SFMono-Regular', Consolas, monospace" font-size="26" font-weight="700">LIVE</text>
+
+  <text x="38" y="262" fill="#8E92AB" font-family="'SFMono-Regular', Consolas, monospace" font-size="28">plan</text>
+  <text x="176" y="262" fill="#D7D9E8" font-family="'SFMono-Regular', Consolas, monospace" font-size="28">team</text>
+  <text x="38" y="298" fill="#8E92AB" font-family="'SFMono-Regular', Consolas, monospace" font-size="28">5H</text>
+  <text x="192" y="298" fill="#D7D9E8" font-family="'SFMono-Regular', Consolas, monospace" font-size="28">74% used</text>
+  <text x="396" y="298" fill="#D7D9E8" font-family="'SFMono-Regular', Consolas, monospace" font-size="28">26% left</text>
+  <text x="38" y="334" fill="#8E92AB" font-family="'SFMono-Regular', Consolas, monospace" font-size="28">weekly</text>
+  <text x="192" y="334" fill="#D7D9E8" font-family="'SFMono-Regular', Consolas, monospace" font-size="28">52% used</text>
+  <text x="396" y="334" fill="#D7D9E8" font-family="'SFMono-Regular', Consolas, monospace" font-size="28">48% left</text>
+
+  <rect x="12" y="435" width="578" height="185" rx="6" stroke="#2EA1FF" stroke-width="2"/>
+  <text x="32" y="483" fill="#A7ABC1" font-family="'SFMono-Regular', Consolas, monospace" font-size="32" font-weight="700">▶ xxx@gmail.com</text>
+  <rect x="462" y="455" width="104" height="36" fill="#63B3DD"/>
+  <text x="483" y="480" fill="#2B2F43" font-family="'SFMono-Regular', Consolas, monospace" font-size="26" font-weight="700">LIVE</text>
+
+  <text x="38" y="521" fill="#8E92AB" font-family="'SFMono-Regular', Consolas, monospace" font-size="28">plan</text>
+  <text x="176" y="521" fill="#D7D9E8" font-family="'SFMono-Regular', Consolas, monospace" font-size="28">plus</text>
+  <text x="38" y="557" fill="#8E92AB" font-family="'SFMono-Regular', Consolas, monospace" font-size="28">5H</text>
+  <text x="192" y="557" fill="#D7D9E8" font-family="'SFMono-Regular', Consolas, monospace" font-size="28">18% used</text>
+  <text x="396" y="557" fill="#D7D9E8" font-family="'SFMono-Regular', Consolas, monospace" font-size="28">82% left</text>
+  <text x="38" y="593" fill="#8E92AB" font-family="'SFMono-Regular', Consolas, monospace" font-size="28">weekly</text>
+  <text x="192" y="593" fill="#D7D9E8" font-family="'SFMono-Regular', Consolas, monospace" font-size="28">92% used</text>
+  <text x="396" y="593" fill="#D7D9E8" font-family="'SFMono-Regular', Consolas, monospace" font-size="28">8% left</text>
+</svg>

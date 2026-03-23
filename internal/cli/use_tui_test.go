@@ -66,14 +66,17 @@ func TestProfileSelectorModelViewShowsInstructionsAndMarker(t *testing.T) {
 	view := model.View()
 	for _, want := range []string{
 		"Select profile",
-		"Move with up/down or j/k",
-		"used",
-		"left",
+		"Choose the next active Codex profile",
+		"ACTIVE",
+		"LIVE",
+		"CACHE",
+		"plan",
+		"5H",
+		"weekly",
 		"beta",
 		"alpha",
-		"live",
-		"cache",
-		"[active]",
+		"enter switch",
+		"q cancel",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view = %q, want %q", view, want)

@@ -49,18 +49,58 @@ $ ./codex-switch use personal
 active profile: personal
 
 $ ./codex-switch status
-Active: personal (plus)
+Status
+╭───────────────╮ ╭───────────╮ ╭──────────╮ ╭──────────────────╮
+│ ACTIVE work   │ │ PLAN plus │ │ SRC LIVE │ │ PROFILES 2 total │
+╰───────────────╯ ╰───────────╯ ╰──────────╯ ╰──────────────────╯
 
-5-hour window:
-  Used: 8%
-  Resets in: 4h 50m (at 2026-03-23 14:31)
+╭────────────────────────────────────────────╮
+│ Quota                                      │
+│                                            │
+│ 5H used       8%                           │
+│ 5H left       92%                          │
+│ 5H reset      4h 50m (at 2026-03-23 14:31) │
+│ Weekly used   12%                          │
+│ Weekly left   88%                          │
+│ Weekly reset  5d 2h (at 2026-03-28 18:42)  │
+│ Credits       none                         │
+╰────────────────────────────────────────────╯
 
-Weekly quota:
-  Used: 12%
-  Resets in: 5d 2h (at 2026-03-28 18:42)
+╭──────────────────────────────────╮
+│ Watch                            │
+│                                  │
+│ Mode        manual foreground    │
+│ Notify      yes                  │
+│ Thresholds  5H 90% / weekly 95%  │
+│ History     No watch history yet │
+╰──────────────────────────────────╯
 
-Credits: none
+╭─────────────────────────────╮
+│ Recent Switch               │
+│                             │
+│ No auto-switch recorded yet │
+╰─────────────────────────────╯
+
+╭───────────────────────────╮
+│ Profiles                  │
+│                           │
+│ Current      work         │
+│ Previous     -            │
+│ Saved        2 total      │
+│ Auto check   on           │
+│ Check model  gpt-5.4-mini │
+╰───────────────────────────╯
 ```
+
+### Screenshots
+
+Interactive profile selector (redacted):
+
+![Interactive profile selector](docs/images/use-selector-redacted.svg)
+
+Status dashboard (redacted):
+
+![Status dashboard](docs/images/status-dashboard-redacted.svg)
 
 ## Commands
 
@@ -68,7 +108,7 @@ Credits: none
 auth <name>          Save the current auth profile or import one with --login
 list [--no-check]    Show saved profiles and quota usage
 use [name]           Activate a saved profile or open the selector
-status [--no-check]  Show the active profile quota details
+status [--no-check]  Show active profile, quota, and watch summary
 remove <name>        Remove a saved profile
 watch                Watch quota usage and switch automatically
 ```
@@ -120,9 +160,10 @@ notify = true
 
 - `auth --login` temporarily runs `codex logout` and `codex login`, then restores the original `~/.codex/auth.json`.
 - Plain `auth` saves the account already present in `~/.codex/auth.json`; if no current session exists, it tells you to use `auth --login`.
-- `use` without a profile name opens an interactive selector with arrow keys or `j`/`k`; `use <name>` keeps the non-interactive path for scripts.
-- `list` and the `use` selector both show `used` and `left` percentages; `SRC` tells you whether a row came from a live check or cached quota data.
+- `use` without a profile name opens an inline Bubble Tea selector with arrow keys or `j`/`k`; `use <name>` keeps the non-interactive path for scripts.
+- `list`, the `use` selector, and the `status` summary bar all show `SRC`. `SRC LIVE` means the quota data came from a fresh network check; `SRC CACHE` means it came from the local cache in `~/.codex-switch/config.toml`.
 - `list --no-check` and `status --no-check` read cached quota data from `~/.codex-switch/config.toml`.
+- `status` renders a compact terminal dashboard with a summary bar plus `Quota`, `Watch`, `Recent Switch`, and `Profiles` cards.
 - `remove <name>` refuses to delete the active profile unless you pass `--force`.
 - `watch` is event-driven: it does one startup calibration, then reacts to local Codex session events instead of fixed-interval quota polling.
 

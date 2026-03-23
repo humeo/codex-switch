@@ -318,9 +318,12 @@ func TestStatusCommandShowsActiveProfileDetails(t *testing.T) {
 	dir := t.TempDir()
 	profilesDir := filepath.Join(dir, "profiles")
 	cfgPath := filepath.Join(dir, "config.toml")
+	statePath := filepath.Join(dir, "watch-state.toml")
+	checksPath := filepath.Join(dir, "watch-checks.jsonl")
 
 	store := profile.NewStore(profilesDir)
 	writeProfile(t, store, "work", []byte(`{"tokens":{"access_token":"work-token","account_id":"acct-work"}}`))
+	writeProfile(t, store, "personal", []byte(`{"tokens":{"access_token":"personal-token","account_id":"acct-personal"}}`))
 	cfg := config.Default()
 	cfg.ActiveProfile = "work"
 	cfg.Cache["work"] = config.QuotaCache{
@@ -335,6 +338,37 @@ func TestStatusCommandShowsActiveProfileDetails(t *testing.T) {
 	if err := config.Save(cfgPath, cfg); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
+	now := time.Date(2026, 3, 23, 9, 30, 0, 0, time.UTC)
+	if err := watcher.SaveState(statePath, watcher.WatchState{
+		Runtime: watcher.RuntimeState{
+			ActiveProfile: "work",
+			CooldownUntil: now.Add(8 * time.Minute),
+		},
+		Profiles: map[string]watcher.ProfileState{
+			"work": {
+				LastConfirmedAt:          now,
+				LastTriggeredAt:          now,
+				LastTriggerSource:        "session_rate_limits",
+				LastPlan:                 "plus",
+				LastPrimaryUsedPercent:   2,
+				LastSecondaryUsedPercent: 86,
+				LastPrimaryResetAt:       time.Date(2026, 3, 23, 14, 31, 0, 0, time.UTC),
+				LastSecondaryResetAt:     time.Date(2026, 3, 25, 18, 42, 0, 0, time.UTC),
+			},
+		},
+	}); err != nil {
+		t.Fatalf("SaveState() error = %v", err)
+	}
+	if err := watcher.AppendCheckEvent(checksPath, watcher.CheckEvent{
+		At:         time.Date(2026, 3, 23, 9, 10, 0, 0, time.UTC),
+		Profile:    "personal",
+		Kind:       "switch",
+		Trigger:    "primary_threshold",
+		Success:    true,
+		SwitchedTo: "work",
+	}); err != nil {
+		t.Fatalf("AppendCheckEvent() error = %v", err)
+	}
 
 	called := false
 	useQuotaChecker(t, func(_ context.Context, _ quota.Tokens, _ string) (quota.Snapshot, error) {
@@ -344,9 +378,11 @@ func TestStatusCommandShowsActiveProfileDetails(t *testing.T) {
 
 	stdout := &bytes.Buffer{}
 	cmd := NewRootCommand(Dependencies{
-		ConfigPath:  cfgPath,
-		ProfilesDir: profilesDir,
-		Stdout:      stdout,
+		ConfigPath:      cfgPath,
+		ProfilesDir:     profilesDir,
+		WatchStatePath:  statePath,
+		WatchChecksPath: checksPath,
+		Stdout:          stdout,
 	})
 	cmd.SetArgs([]string{"status", "--no-check"})
 
@@ -359,15 +395,97 @@ func TestStatusCommandShowsActiveProfileDetails(t *testing.T) {
 	}
 	got := stdout.String()
 	for _, want := range []string{
-		"Active: work (plus)",
-		"Used: 2%",
-		"Used: 86%",
-		"Resets in: 4h 20m (at 2026-03-23 14:31)",
-		"Resets in: 2d 9h (at 2026-03-25 18:42)",
-		"Credits: none",
+		"Status",
+		"ACTIVE",
+		"PLAN",
+		"SRC",
+		"PROFILES",
+		"work",
+		"CACHE",
+		"2 total",
+		"Quota",
+		"5H used",
+		"2%",
+		"5H left",
+		"98%",
+		"5H reset",
+		"4h 20m (at 2026-03-23 14:31)",
+		"Weekly used",
+		"86%",
+		"Weekly left",
+		"14%",
+		"Weekly reset",
+		"2d 9h (at 2026-03-25 18:42)",
+		"Credits",
+		"none",
+		"Watch",
+		"Mode",
+		"manual foreground",
+		"Notify",
+		"yes",
+		"Thresholds",
+		"5H 90% / weekly 95%",
+		"Runtime active",
+		"Cooldown",
+		"2026-03-23 09:38",
+		"Last confirmed",
+		"2026-03-23 09:30",
+		"Last trigger",
+		"session_rate_limits",
+		"Recent Switch",
+		"Last auto switch",
+		"2026-03-23 09:10",
+		"From",
+		"personal",
+		"To",
+		"Trigger",
+		"primary_threshold",
+		"Profiles",
+		"Current",
+		"Previous",
+		"Saved",
+		"Auto check",
+		"gpt-5.4-mini",
+		"╭",
+		"╰",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("stdout = %q, want %q", got, want)
+		}
+	}
+}
+
+func TestRenderStatusShowsFriendlyEmptyStates(t *testing.T) {
+	var out bytes.Buffer
+
+	renderStatus(&out, statusSummary{
+		activeName:     "solo",
+		activeSnapshot: quota.Snapshot{Plan: "plus", PrimaryUsedPercent: 12, SecondaryUsedPercent: 34},
+		activeSource:   quotaSourceLive,
+		totalProfiles:  1,
+		autoCheck:      true,
+		checkModel:     "gpt-5.4-mini",
+		watch: statusWatchSummary{
+			mode:               "manual foreground",
+			notify:             true,
+			primaryThreshold:   90,
+			secondaryThreshold: 95,
+		},
+	})
+
+	got := out.String()
+	for _, want := range []string{
+		"ACTIVE",
+		"solo",
+		"Quota",
+		"Watch",
+		"No watch history yet",
+		"Recent Switch",
+		"No auto-switch recorded yet",
+		"Profiles",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("renderStatus() = %q, want %q", got, want)
 		}
 	}
 }

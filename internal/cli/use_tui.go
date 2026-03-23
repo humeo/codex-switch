@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"golang.org/x/term"
 )
 
@@ -99,38 +100,18 @@ func (m profileSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m profileSelectorModel) View() string {
 	var b strings.Builder
-	b.WriteString("Select profile\n")
-	b.WriteString("Move with up/down or j/k. Press Enter to switch, q to cancel.\n\n")
+	b.WriteString(selectorTitleStyle.Render("Select profile"))
+	b.WriteByte('\n')
+	b.WriteString(selectorSubtitleStyle.Render("Choose the next active Codex profile"))
+	b.WriteString("\n\n")
 	for i, row := range m.rows {
-		cursor := "  "
-		if i == m.cursor {
-			cursor = "> "
+		b.WriteString(renderSelectorRow(row, i == m.cursor))
+		if i < len(m.rows)-1 {
+			b.WriteString("\n\n")
 		}
-
-		active := ""
-		if row.active {
-			active = " [active]"
-		}
-
-		b.WriteString(cursor)
-		b.WriteString(row.name)
-		b.WriteString("  [")
-		b.WriteString(displayPlan(row.snapshot.Plan))
-		b.WriteString("] [")
-		b.WriteString(string(row.source))
-		b.WriteString("]")
-		b.WriteString(active)
-		b.WriteByte('\n')
-		b.WriteString("    5H used ")
-		b.WriteString(padLeftPercent(row.snapshot.PrimaryUsedPercent))
-		b.WriteString(" | left ")
-		b.WriteString(padLeftPercent(remainingPercent(row.snapshot.PrimaryUsedPercent)))
-		b.WriteString("    weekly used ")
-		b.WriteString(padLeftPercent(row.snapshot.SecondaryUsedPercent))
-		b.WriteString(" | left ")
-		b.WriteString(padLeftPercent(remainingPercent(row.snapshot.SecondaryUsedPercent)))
-		b.WriteByte('\n')
 	}
+	b.WriteString("\n\n")
+	b.WriteString(selectorFooterStyle.Render("↑/↓ move • j/k move • enter switch • q cancel"))
 	return b.String()
 }
 
@@ -153,4 +134,78 @@ func wrapSelection(index, total int) int {
 		return 0
 	}
 	return index
+}
+
+var (
+	selectorTitleStyle    = lipgloss.NewStyle().Bold(true)
+	selectorSubtitleStyle = lipgloss.NewStyle().Faint(true)
+	selectorFooterStyle   = lipgloss.NewStyle().Faint(true)
+	selectorRowBaseStyle  = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				Padding(0, 1)
+	selectorRowActiveStyle = selectorRowBaseStyle.
+				BorderForeground(lipgloss.Color("39"))
+	selectorRowIdleStyle = selectorRowBaseStyle.
+				BorderForeground(lipgloss.Color("240"))
+	selectorNameStyle      = lipgloss.NewStyle().Bold(true)
+	selectorBadgeBaseStyle = lipgloss.NewStyle().
+				Padding(0, 1).
+				Bold(true)
+	selectorActiveBadgeStyle = selectorBadgeBaseStyle.
+					Foreground(lipgloss.Color("0")).
+					Background(lipgloss.Color("149"))
+	selectorSourceLiveBadgeStyle = selectorBadgeBaseStyle.
+					Foreground(lipgloss.Color("0")).
+					Background(lipgloss.Color("81"))
+	selectorSourceCacheBadgeStyle = selectorBadgeBaseStyle.
+					Foreground(lipgloss.Color("255")).
+					Background(lipgloss.Color("241"))
+	selectorLabelStyle = lipgloss.NewStyle().Faint(true)
+)
+
+func renderSelectorRow(row listRow, selected bool) string {
+	indicator := "  "
+	if selected {
+		indicator = "▶ "
+	}
+
+	badges := []string{}
+	if row.active {
+		badges = append(badges, selectorActiveBadgeStyle.Render("ACTIVE"))
+	}
+	switch row.source {
+	case quotaSourceLive:
+		badges = append(badges, selectorSourceLiveBadgeStyle.Render("LIVE"))
+	default:
+		badges = append(badges, selectorSourceCacheBadgeStyle.Render("CACHE"))
+	}
+
+	headerParts := []string{indicator + selectorNameStyle.Render(row.name)}
+	headerParts = append(headerParts, badges...)
+	header := lipgloss.JoinHorizontal(lipgloss.Top, headerParts...)
+
+	left := lipgloss.JoinVertical(
+		lipgloss.Left,
+		renderSelectorMetric("plan", displayPlan(row.snapshot.Plan)),
+		renderSelectorMetric("5H", formatSelectorQuota(row.snapshot.PrimaryUsedPercent)),
+		renderSelectorMetric("weekly", formatSelectorQuota(row.snapshot.SecondaryUsedPercent)),
+	)
+
+	cardStyle := selectorRowIdleStyle
+	if selected {
+		cardStyle = selectorRowActiveStyle
+	}
+	return cardStyle.Render(header + "\n" + left)
+}
+
+func renderSelectorMetric(label, value string) string {
+	return lipgloss.JoinHorizontal(
+		lipgloss.Top,
+		selectorLabelStyle.Width(8).Render(label),
+		value,
+	)
+}
+
+func formatSelectorQuota(used int) string {
+	return padLeftPercent(used) + " used   " + padLeftPercent(remainingPercent(used)) + " left"
 }
