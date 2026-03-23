@@ -40,7 +40,7 @@ type Client struct {
 func ParseHeaders(headers http.Header) (Snapshot, error) {
 	var snapshot Snapshot
 
-	if value := headers.Get("x-codex-plan"); value != "" {
+	if value := headers.Get("x-codex-plan-type"); value != "" {
 		snapshot.Plan = value
 	}
 	if value := headers.Get("x-codex-primary-used-percent"); value != "" {
@@ -57,17 +57,17 @@ func ParseHeaders(headers http.Header) (Snapshot, error) {
 		}
 		snapshot.SecondaryUsedPercent = n
 	}
-	if value := headers.Get("x-codex-primary-reset-after"); value != "" {
+	if value := headers.Get("x-codex-primary-reset-after-seconds"); value != "" {
 		n, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
-			return Snapshot{}, fmt.Errorf("parse x-codex-primary-reset-after: %w", err)
+			return Snapshot{}, fmt.Errorf("parse x-codex-primary-reset-after-seconds: %w", err)
 		}
 		snapshot.PrimaryResetAfter = time.Duration(n) * time.Second
 	}
-	if value := headers.Get("x-codex-secondary-reset-after"); value != "" {
+	if value := headers.Get("x-codex-secondary-reset-after-seconds"); value != "" {
 		n, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
-			return Snapshot{}, fmt.Errorf("parse x-codex-secondary-reset-after: %w", err)
+			return Snapshot{}, fmt.Errorf("parse x-codex-secondary-reset-after-seconds: %w", err)
 		}
 		snapshot.SecondaryResetAfter = time.Duration(n) * time.Second
 	}
@@ -154,7 +154,7 @@ func (c Client) Check(ctx context.Context, tokens Tokens, model string) (Snapsho
 
 		snapshot, retryable, err := snapshotFromResponse(resp)
 		if err != nil {
-			if attempt == 2 {
+			if !retryable || attempt == 2 {
 				return Snapshot{}, err
 			}
 			lastErr = err

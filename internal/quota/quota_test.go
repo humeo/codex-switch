@@ -13,11 +13,11 @@ import (
 
 func TestParseHeadersMapsCodexQuotaFields(t *testing.T) {
 	headers := http.Header{}
-	headers.Set("x-codex-plan", "plus")
+	headers.Set("x-codex-plan-type", "plus")
 	headers.Set("x-codex-primary-used-percent", "12")
 	headers.Set("x-codex-secondary-used-percent", "34")
-	headers.Set("x-codex-primary-reset-after", "60")
-	headers.Set("x-codex-secondary-reset-after", "120")
+	headers.Set("x-codex-primary-reset-after-seconds", "60")
+	headers.Set("x-codex-secondary-reset-after-seconds", "120")
 	headers.Set("x-codex-primary-reset-at", "1700000000")
 	headers.Set("x-codex-secondary-reset-at", "1700000123")
 	headers.Set("x-codex-credits-has-credits", "true")
@@ -105,7 +105,7 @@ func TestCheckSendsCodexResponsesRequest(t *testing.T) {
 				}
 
 				headers := http.Header{}
-				headers.Set("x-codex-plan", "plus")
+				headers.Set("x-codex-plan-type", "plus")
 				headers.Set("x-codex-primary-used-percent", "7")
 				headers.Set("x-codex-secondary-used-percent", "9")
 				return &http.Response{
@@ -191,6 +191,31 @@ func TestCheckRetriesTransientErrors(t *testing.T) {
 	}
 	if got.PrimaryUsedPercent != 1 {
 		t.Fatalf("PrimaryUsedPercent = %d, want 1", got.PrimaryUsedPercent)
+	}
+}
+
+func TestCheckDoesNotRetryNonRetryableParseErrors(t *testing.T) {
+	var attempts int
+	client := Client{
+		HTTP: &http.Client{
+			Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+				attempts++
+				headers := http.Header{}
+				headers.Set("x-codex-primary-used-percent", "not-a-number")
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     headers,
+					Body:       io.NopCloser(strings.NewReader("{}")),
+				}, nil
+			}),
+		},
+	}
+
+	if _, err := client.Check(context.Background(), Tokens{}, "gpt-4.1"); err == nil {
+		t.Fatal("Check() error = nil, want parse failure")
+	}
+	if attempts != 1 {
+		t.Fatalf("attempts = %d, want 1", attempts)
 	}
 }
 
