@@ -1,6 +1,7 @@
 package profile
 
 import (
+	"errors"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -51,5 +52,23 @@ func TestListAndRemoveProfiles(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, []string{"b"}) {
 		t.Fatalf("List() after remove = %v, want [b]", got)
+	}
+}
+
+func TestRejectsInvalidProfileNames(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "profiles"))
+
+	for _, name := range []string{"", ".", "..", "../escape", `..\\escape`, "nested/name"} {
+		t.Run(name, func(t *testing.T) {
+			if err := store.Save(name, []byte("x")); !errors.Is(err, ErrInvalidName) {
+				t.Fatalf("Save(%q) error = %v, want ErrInvalidName", name, err)
+			}
+			if _, err := store.Load(name); !errors.Is(err, ErrInvalidName) {
+				t.Fatalf("Load(%q) error = %v, want ErrInvalidName", name, err)
+			}
+			if err := store.Remove(name); !errors.Is(err, ErrInvalidName) {
+				t.Fatalf("Remove(%q) error = %v, want ErrInvalidName", name, err)
+			}
+		})
 	}
 }

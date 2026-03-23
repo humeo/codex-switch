@@ -1,11 +1,14 @@
 package profile
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 )
+
+var ErrInvalidName = errors.New("invalid profile name")
 
 type Store struct {
 	dir string
@@ -16,15 +19,23 @@ func NewStore(dir string) Store {
 }
 
 func (s Store) Save(name string, raw []byte) error {
+	path, err := s.path(name)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(s.dir, 0o755); err != nil {
 		return err
 	}
 
-	return os.WriteFile(s.path(name), raw, 0o600)
+	return os.WriteFile(path, raw, 0o600)
 }
 
 func (s Store) Load(name string) ([]byte, error) {
-	return os.ReadFile(s.path(name))
+	path, err := s.path(name)
+	if err != nil {
+		return nil, err
+	}
+	return os.ReadFile(path)
 }
 
 func (s Store) List() ([]string, error) {
@@ -52,9 +63,26 @@ func (s Store) List() ([]string, error) {
 }
 
 func (s Store) Remove(name string) error {
-	return os.Remove(s.path(name))
+	path, err := s.path(name)
+	if err != nil {
+		return err
+	}
+	return os.Remove(path)
 }
 
-func (s Store) path(name string) string {
-	return filepath.Join(s.dir, name+".json")
+func (s Store) path(name string) (string, error) {
+	if err := validateName(name); err != nil {
+		return "", err
+	}
+	return filepath.Join(s.dir, name+".json"), nil
+}
+
+func validateName(name string) error {
+	switch {
+	case name == "", name == ".", name == "..":
+		return ErrInvalidName
+	case strings.Contains(name, "/"), strings.Contains(name, `\`):
+		return ErrInvalidName
+	}
+	return nil
 }
