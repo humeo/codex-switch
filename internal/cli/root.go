@@ -25,7 +25,3 @@ func NewRootCommand(deps Dependencies) *cobra.Command {
 
 	return cmd
 }
-
-func newWatchCommand(Dependencies) *cobra.Command {
-	return &cobra.Command{Use: "watch"}
-}
