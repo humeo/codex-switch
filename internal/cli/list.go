@@ -15,7 +15,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const emptyProfilesMessage = "No profiles found. Run 'codex-switch auth <name>' to add one."
+const emptyProfilesMessage = "No profiles found. Run 'codex-switch auth --login <name>' to add one."
 
 type quotaChecker interface {
 	Check(context.Context, quota.Tokens, string) (quota.Snapshot, error)
@@ -41,6 +41,7 @@ type listRow struct {
 	name     string
 	snapshot quota.Snapshot
 	active   bool
+	source   quotaSource
 }
 
 func newListCommand(deps Dependencies) *cobra.Command {
@@ -66,34 +67,10 @@ func newListCommand(deps Dependencies) *cobra.Command {
 				return nil
 			}
 
-			checkLive := cfg.AutoCheck && !noCheck
-			var checker quotaChecker
-			if checkLive {
-				checker = quotaCheckerFactory()
+			rows, err := loadProfileRows(cmd.Context(), deps, &cfg, store, names, cfg.AutoCheck && !noCheck, true)
+			if err != nil {
+				return err
 			}
-
-			rows := make([]listRow, 0, len(names))
-			for _, name := range names {
-				snapshot, err := resolveSnapshot(cmd.Context(), deps, &cfg, store, name, checkLive, checker)
-				if err != nil {
-					return err
-				}
-				rows = append(rows, listRow{
-					name:     name,
-					snapshot: snapshot,
-					active:   name == cfg.ActiveProfile,
-				})
-			}
-
-			sort.SliceStable(rows, func(i, j int) bool {
-				if rows[i].snapshot.SecondaryUsedPercent != rows[j].snapshot.SecondaryUsedPercent {
-					return rows[i].snapshot.SecondaryUsedPercent < rows[j].snapshot.SecondaryUsedPercent
-				}
-				if rows[i].snapshot.PrimaryUsedPercent != rows[j].snapshot.PrimaryUsedPercent {
-					return rows[i].snapshot.PrimaryUsedPercent < rows[j].snapshot.PrimaryUsedPercent
-				}
-				return rows[i].name < rows[j].name
-			})
 
 			renderList(cmd.OutOrStdout(), rows)
 			return nil
@@ -186,19 +163,34 @@ func snapshotFromCache(cache config.QuotaCache) quota.Snapshot {
 
 func renderList(out io.Writer, rows []listRow) {
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tPLAN\t5H USED\tWEEKLY USED\t5H RESET\tWEEKLY RESET\tACTIVE")
+	fmt.Fprintln(w, "NAME\tPLAN\t5H USED\t5H LEFT\tWEEKLY USED\tWEEKLY LEFT\t5H RESET\tWEEKLY RESET\tSRC\tACTIVE")
 	for _, row := range rows {
-		fmt.Fprintf(w, "%s\t%s\t%d%%\t%d%%\t%s\t%s\t%s\n",
+		fmt.Fprintf(w, "%s\t%s\t%d%%\t%d%%\t%d%%\t%d%%\t%s\t%s\t%s\t%s\n",
 			row.name,
 			displayPlan(row.snapshot.Plan),
 			row.snapshot.PrimaryUsedPercent,
+			remainingPercent(row.snapshot.PrimaryUsedPercent),
 			row.snapshot.SecondaryUsedPercent,
+			remainingPercent(row.snapshot.SecondaryUsedPercent),
 			formatResetCompact(row.snapshot.PrimaryResetAfter),
 			formatResetCompact(row.snapshot.SecondaryResetAfter),
+			string(row.source),
 			activeMarker(row.active),
 		)
 	}
 	_ = w.Flush()
+}
+
+func sortListRows(rows []listRow) {
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].snapshot.SecondaryUsedPercent != rows[j].snapshot.SecondaryUsedPercent {
+			return rows[i].snapshot.SecondaryUsedPercent < rows[j].snapshot.SecondaryUsedPercent
+		}
+		if rows[i].snapshot.PrimaryUsedPercent != rows[j].snapshot.PrimaryUsedPercent {
+			return rows[i].snapshot.PrimaryUsedPercent < rows[j].snapshot.PrimaryUsedPercent
+		}
+		return rows[i].name < rows[j].name
+	})
 }
 
 func activeMarker(active bool) string {

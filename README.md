@@ -32,18 +32,18 @@ go build ./cmd/codex-switch
 ## See It Work
 
 ```text
-$ ./codex-switch auth work
+$ ./codex-switch auth --login work
 warning: codex logout and codex login will run now
 saved profile: work
 
-$ ./codex-switch auth personal
+$ ./codex-switch auth --login personal
 warning: codex logout and codex login will run now
 saved profile: personal
 
 $ ./codex-switch list
-NAME      PLAN   5H USED   WEEKLY USED   5H RESET   WEEKLY RESET   ACTIVE
-personal  plus   8%        12%           4h 50m     5d 2h
-work      plus   22%       61%           1h 10m     2d 6h          *
+NAME      PLAN   5H USED   5H LEFT   WEEKLY USED   WEEKLY LEFT   5H RESET   WEEKLY RESET   SRC    ACTIVE
+personal  plus   8%        92%       12%           88%           4h 50m     5d 2h         live
+work      plus   22%       78%       61%           39%           1h 10m     2d 6h         live   *
 
 $ ./codex-switch use personal
 active profile: personal
@@ -65,9 +65,9 @@ Credits: none
 ## Commands
 
 ```text
-auth <name>          Capture a new Codex auth profile
+auth <name>          Save the current auth profile or import one with --login
 list [--no-check]    Show saved profiles and quota usage
-use <name>           Activate a saved profile
+use [name]           Activate a saved profile or open the selector
 status [--no-check]  Show the active profile quota details
 remove <name>        Remove a saved profile
 watch                Watch quota usage and switch automatically
@@ -75,10 +75,11 @@ watch                Watch quota usage and switch automatically
 
 ## Getting Started
 
-1. Run `./codex-switch auth <name>` once per account you want to save.
-2. Use `./codex-switch list` to compare usage across accounts.
-3. Use `./codex-switch use <name>` to switch manually.
-4. Run `./codex-switch watch` if you want foreground auto-switching based on your configured thresholds.
+1. Run `./codex-switch auth --login <name>` to sign in and save a new account.
+2. Run `./codex-switch auth <name>` if you only want to save the account already active in `~/.codex/auth.json`.
+3. Use `./codex-switch list` to compare usage across accounts.
+4. Use `./codex-switch use` to pick a profile interactively, or `./codex-switch use <name>` to switch directly.
+5. Run `./codex-switch watch` if you want foreground auto-switching based on your configured thresholds.
 
 ## Configuration
 
@@ -96,7 +97,7 @@ secondary_threshold_percent = 95
 notify = true
 ```
 
-`auto_check = false` makes `list` and `status` use cached quota data by default. `--no-check` also forces cache-only output for that invocation.
+`auto_check = true` is the default, so `list` and `status` try to fetch fresh quota data unless you disable it in config. `--no-check` forces cache-only output for that invocation.
 
 ## How It Works
 
@@ -114,7 +115,10 @@ notify = true
 
 ## Reference
 
-- `auth` temporarily runs `codex logout` and `codex login`, then restores the original `~/.codex/auth.json`.
+- `auth --login` temporarily runs `codex logout` and `codex login`, then restores the original `~/.codex/auth.json`.
+- Plain `auth` saves the account already present in `~/.codex/auth.json`; if no current session exists, it tells you to use `auth --login`.
+- `use` without a profile name opens an interactive selector with arrow keys or `j`/`k`; `use <name>` keeps the non-interactive path for scripts.
+- `list` and the `use` selector both show `used` and `left` percentages; `SRC` tells you whether a row came from a live check or cached quota data.
 - `list --no-check` and `status --no-check` read cached quota data from `~/.codex-switch/config.toml`.
 - `remove <name>` refuses to delete the active profile unless you pass `--force`.
 

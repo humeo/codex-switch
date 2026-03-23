@@ -1,10 +1,18 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
+	"strings"
 
 	"codex-switch/internal/config"
 	"codex-switch/internal/profile"
@@ -25,15 +33,105 @@ var authRunnerFactory = func() Runner {
 	return execRunner{}
 }
 
+type authIdentity struct {
+	Email string
+}
+
+type authProber interface {
+	Probe(ctx context.Context, raw []byte, model string) (authIdentity, error)
+}
+
+type liveAuthProber struct {
+	HTTP *http.Client
+}
+
+func (p liveAuthProber) Probe(ctx context.Context, raw []byte, model string) (authIdentity, error) {
+	var stored profile.Profile
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		return authIdentity{}, err
+	}
+	if stored.Tokens.AccessToken == "" {
+		return authIdentity{}, errors.New("current auth is missing access token")
+	}
+	if stored.Tokens.AccountID == "" {
+		return authIdentity{}, errors.New("current auth is missing account id")
+	}
+	if model == "" {
+		model = config.Default().CheckModel
+	}
+
+	body, err := json.Marshal(map[string]any{
+		"model": model,
+		"input": []map[string]string{{
+			"role":    "user",
+			"content": "hi",
+		}},
+		"instructions": ".",
+		"store":        false,
+		"stream":       true,
+		"reasoning": map[string]string{
+			"effort": "none",
+		},
+	})
+	if err != nil {
+		return authIdentity{}, err
+	}
+
+	endpoint, err := url.JoinPath("https://chatgpt.com", "/backend-api/codex/responses")
+	if err != nil {
+		return authIdentity{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return authIdentity{}, err
+	}
+	req.Header.Set("Authorization", "Bearer "+stored.Tokens.AccessToken)
+	req.Header.Set("ChatGPT-Account-Id", stored.Tokens.AccountID)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := p.HTTP
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return authIdentity{}, err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return authIdentity{}, fmt.Errorf("auth probe failed with status %d", resp.StatusCode)
+	}
+
+	email := emailFromHeaders(resp.Header)
+	if email == "" {
+		email = emailFromIDToken(stored.Tokens.IDToken)
+	}
+	if email == "" {
+		return authIdentity{}, errors.New("auth probe did not return a usable email")
+	}
+	return authIdentity{Email: email}, nil
+}
+
+var authProberFactory = func() authProber {
+	return liveAuthProber{}
+}
+
 func newAuthCommand(deps Dependencies) *cobra.Command {
 	var overwrite bool
+	var login bool
+	var nameFlag string
 
 	cmd := &cobra.Command{
-		Use:   "auth <name>",
-		Short: "Capture a new Codex auth profile",
-		Args:  cobra.ExactArgs(1),
+		Use:   "auth [name]",
+		Short: "Save the current Codex auth profile or import one via login",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			name := args[0]
+			name, err := resolveRequestedProfileName(args, nameFlag)
+			if err != nil {
+				return err
+			}
 			store := profile.NewStore(deps.ProfilesDir)
 
 			cfg, err := config.Load(deps.ConfigPath)
@@ -46,54 +144,46 @@ func newAuthCommand(deps Dependencies) *cobra.Command {
 			}
 			firstProfile := len(existingProfiles) == 0
 
+			raw, err := os.ReadFile(deps.AuthPath)
+			hasCurrentAuth := err == nil
+			if err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			prober := authProberFactory()
+			identity := authIdentity{}
+
+			switch {
+			case login:
+				raw, err = captureAuthViaLogin(cmd.Context(), cmd.ErrOrStderr(), deps.AuthPath)
+				if err != nil {
+					return err
+				}
+				identity, err = prober.Probe(cmd.Context(), raw, cfg.CheckModel)
+				if err != nil {
+					return err
+				}
+			case hasCurrentAuth:
+				identity, err = prober.Probe(cmd.Context(), raw, cfg.CheckModel)
+				if err != nil {
+					return err
+				}
+			default:
+				return fmt.Errorf("no current auth session found; use 'codex-switch auth --login' to add a new account")
+			}
+
+			if name == "" {
+				name = identity.Email
+			}
+			if name == "" {
+				return errors.New("could not determine profile name; pass --name")
+			}
+
 			if _, err := store.Load(name); err == nil && !overwrite {
-				return fmt.Errorf("profile %q already exists; use --overwrite to replace it", name)
+				return fmt.Errorf("profile %q already exists; use --overwrite to replace it or 'codex-switch auth --login' to add a new account", name)
 			} else if err != nil && !os.IsNotExist(err) {
 				return err
 			}
 
-			restore := func() error { return nil }
-			if _, err := os.Stat(deps.AuthPath); err == nil {
-				backupPath := deps.AuthPath + ".bak"
-				_ = os.Remove(backupPath)
-				if err := os.Rename(deps.AuthPath, backupPath); err != nil {
-					return err
-				}
-				restore = func() error {
-					_ = os.Remove(deps.AuthPath)
-					if err := os.Rename(backupPath, deps.AuthPath); err != nil {
-						return err
-					}
-					return nil
-				}
-			} else if !os.IsNotExist(err) {
-				return err
-			} else {
-				restore = func() error {
-					_ = os.Remove(deps.AuthPath)
-					return nil
-				}
-			}
-
-			defer func() {
-				if restoreErr := restore(); restoreErr != nil && err == nil {
-					err = restoreErr
-				}
-			}()
-
-			runner := authRunnerFactory()
-			fmt.Fprintln(cmd.ErrOrStderr(), "warning: codex logout and codex login will run now")
-			if err := runner.Run(cmd.Context(), "codex", "logout"); err != nil {
-				return err
-			}
-			if err := runner.Run(cmd.Context(), "codex", "login"); err != nil {
-				return err
-			}
-
-			raw, err := os.ReadFile(deps.AuthPath)
-			if err != nil {
-				return err
-			}
 			if err := store.Save(name, raw); err != nil {
 				return err
 			}
@@ -110,7 +200,9 @@ func newAuthCommand(deps Dependencies) *cobra.Command {
 		},
 	}
 
+	cmd.Flags().BoolVar(&login, "login", false, "run codex login to import a different account")
 	cmd.Flags().BoolVar(&overwrite, "overwrite", false, "replace an existing profile")
+	cmd.Flags().StringVar(&nameFlag, "name", "", "set a local profile name")
 	if deps.Stdout != nil {
 		cmd.SetOut(deps.Stdout)
 	}
@@ -118,4 +210,100 @@ func newAuthCommand(deps Dependencies) *cobra.Command {
 		cmd.SetErr(deps.Stderr)
 	}
 	return cmd
+}
+
+func resolveRequestedProfileName(args []string, flagName string) (string, error) {
+	if len(args) == 0 {
+		return flagName, nil
+	}
+	if flagName == "" || flagName == args[0] {
+		return args[0], nil
+	}
+	return "", errors.New("use either [name] or --name, not both")
+}
+
+func captureAuthViaLogin(ctx context.Context, stderr io.Writer, authPath string) (raw []byte, err error) {
+	restore := func() error { return nil }
+	if _, statErr := os.Stat(authPath); statErr == nil {
+		backupPath := authPath + ".bak"
+		_ = os.Remove(backupPath)
+		if err := os.Rename(authPath, backupPath); err != nil {
+			return nil, err
+		}
+		restore = func() error {
+			_ = os.Remove(authPath)
+			if err := os.Rename(backupPath, authPath); err != nil {
+				return err
+			}
+			return nil
+		}
+	} else if !os.IsNotExist(statErr) {
+		return nil, statErr
+	} else {
+		restore = func() error {
+			_ = os.Remove(authPath)
+			return nil
+		}
+	}
+
+	defer func() {
+		if restoreErr := restore(); restoreErr != nil && err == nil {
+			err = restoreErr
+		}
+	}()
+
+	runner := authRunnerFactory()
+	fmt.Fprintln(stderr, "warning: codex logout and codex login will run now")
+	if err := runner.Run(ctx, "codex", "logout"); err != nil {
+		return nil, err
+	}
+	if err := runner.Run(ctx, "codex", "login"); err != nil {
+		return nil, err
+	}
+
+	raw, err = os.ReadFile(authPath)
+	if err != nil {
+		return nil, err
+	}
+	return raw, nil
+}
+
+func emailFromHeaders(headers http.Header) string {
+	for key, values := range headers {
+		if !strings.Contains(strings.ToLower(key), "email") {
+			continue
+		}
+		for _, value := range values {
+			if looksLikeEmail(value) {
+				return value
+			}
+		}
+	}
+	return ""
+}
+
+func emailFromIDToken(idToken string) string {
+	parts := strings.Split(idToken, ".")
+	if len(parts) < 2 {
+		return ""
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return ""
+	}
+
+	var claims map[string]any
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return ""
+	}
+	for _, key := range []string{"email", "preferred_username"} {
+		if value, ok := claims[key].(string); ok && looksLikeEmail(value) {
+			return value
+		}
+	}
+	return ""
+}
+
+func looksLikeEmail(value string) bool {
+	return strings.Count(value, "@") == 1 && !strings.ContainsAny(value, " \t\r\n")
 }

@@ -118,6 +118,7 @@ func (c Client) Check(ctx context.Context, tokens Tokens, model string) (Snapsho
 		}},
 		Instructions: ".",
 		Store:        false,
+		Stream:       true,
 		Reasoning: quotaReasoning{
 			Effort: "none",
 		},
@@ -183,6 +184,7 @@ type quotaRequest struct {
 	Input        []quotaMessage `json:"input"`
 	Instructions string         `json:"instructions"`
 	Store        bool           `json:"store"`
+	Stream       bool           `json:"stream"`
 	Reasoning    quotaReasoning `json:"reasoning"`
 }
 

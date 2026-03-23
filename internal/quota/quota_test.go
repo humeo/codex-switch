@@ -97,6 +97,7 @@ func TestCheckSendsCodexResponsesRequest(t *testing.T) {
 					`"input":[{"role":"user","content":"hi"}]`,
 					`"instructions":"."`,
 					`"store":false`,
+					`"stream":true`,
 					`"reasoning":{"effort":"none"}`,
 				} {
 					if !strings.Contains(gotBody, want) {
