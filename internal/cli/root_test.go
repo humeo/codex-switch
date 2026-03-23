@@ -55,6 +55,31 @@ func TestRootCommandIncludesCoreSubcommands(t *testing.T) {
 	}
 }
 
+func TestRootHelpMentionsQuotaAndSwitching(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	cmd := NewRootCommand(Dependencies{
+		Stdout: stdout,
+		Stderr: stderr,
+	})
+	cmd.SetArgs([]string{"--help"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	got := stdout.String()
+	for _, want := range []string{
+		"Manage multiple Codex OAuth profiles",
+		"List stored profiles and quota status",
+		"Watch quota usage and switch profiles automatically",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("help output missing %q\n%s", want, got)
+		}
+	}
+}
+
 func TestListCommandShowsEmptyState(t *testing.T) {
 	dir := t.TempDir()
 	stdout := &bytes.Buffer{}
