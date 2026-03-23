@@ -13,7 +13,7 @@
 >
 > It makes network calls to `chatgpt.com` for quota checks, `auth.openai.com` for token refresh, and can trigger local desktop notifications when `watch.notify = true`.
 >
-> To stop it immediately, end the foreground `watch` process. To undo it, switch back to another saved profile or restore `~/.codex/auth.json` manually. To uninstall, delete the built binary and remove `~/.codex-switch/`.
+> To stop it immediately, end the foreground `watch` process. To undo it, switch back to another saved profile or restore `~/.codex/auth.json` manually. To uninstall, run the uninstall script below or delete the binary and `~/.codex-switch/` yourself.
 
 ## The Problem
 
@@ -28,6 +28,55 @@ git clone <your-repo-url> codex-switch
 cd codex-switch
 go build ./cmd/codex-switch
 ```
+
+## Install
+
+Install the latest release to `~/.local/bin`:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/humeo/codex-switch/main/scripts/install.sh | bash
+```
+
+Install a specific release:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/humeo/codex-switch/main/scripts/install.sh | VERSION=v0.1.0 bash
+```
+
+Install to a custom directory:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/humeo/codex-switch/main/scripts/install.sh | INSTALL_DIR=/usr/local/bin bash
+```
+
+If you publish this project under a different GitHub owner, override `REPO`:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/<owner>/codex-switch/main/scripts/install.sh | REPO=<owner>/codex-switch bash
+```
+
+Release assets are published as:
+
+- `codex-switch_darwin_arm64.tar.gz`
+- `codex-switch_darwin_amd64.tar.gz`
+- `codex-switch_linux_amd64.tar.gz`
+- `codex-switch_linux_arm64.tar.gz`
+
+## Uninstall
+
+Remove the installed binary but keep saved profiles and cache data:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/humeo/codex-switch/main/scripts/uninstall.sh | bash
+```
+
+Remove the binary and `~/.codex-switch` data:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/humeo/codex-switch/main/scripts/uninstall.sh | REMOVE_DATA=1 bash
+```
+
+The uninstall script does not touch `~/.codex/auth.json`.
 
 ## See It Work
 
