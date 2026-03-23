@@ -141,16 +141,6 @@ Status
 ╰───────────────────────────╯
 ```
 
-### Screenshots
-
-Interactive profile selector (redacted):
-
-![Interactive profile selector](docs/images/use-selector-redacted.svg)
-
-Status dashboard (redacted):
-
-![Status dashboard](docs/images/status-dashboard-redacted.svg)
-
 ## Commands
 
 ```text
