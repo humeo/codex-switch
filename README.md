@@ -29,6 +29,8 @@ cd codex-switch
 go build ./cmd/codex-switch
 ```
 
+If you build from source in the repo root, run the local binary as `./codex-switch`.
+
 ## Install
 
 Install the latest release to `~/.local/bin`:
@@ -81,23 +83,23 @@ The uninstall script does not touch `~/.codex/auth.json`.
 ## See It Work
 
 ```text
-$ ./codex-switch auth --login work
+$ codex-switch auth --login work
 warning: codex logout and codex login will run now
 saved profile: work
 
-$ ./codex-switch auth --login personal
+$ codex-switch auth --login personal
 warning: codex logout and codex login will run now
 saved profile: personal
 
-$ ./codex-switch list
+$ codex-switch list
 NAME      PLAN   5H USED   5H LEFT   WEEKLY USED   WEEKLY LEFT   5H RESET   WEEKLY RESET   SRC    ACTIVE
 personal  plus   8%        92%       12%           88%           4h 50m     5d 2h         live
 work      plus   22%       78%       61%           39%           1h 10m     2d 6h         live   *
 
-$ ./codex-switch use personal
+$ codex-switch use personal
 active profile: personal
 
-$ ./codex-switch status
+$ codex-switch status
 Status
 ╭───────────────╮ ╭───────────╮ ╭──────────╮ ╭──────────────────╮
 │ ACTIVE work   │ │ PLAN plus │ │ SRC LIVE │ │ PROFILES 2 total │
@@ -154,11 +156,11 @@ watch                Watch quota usage and switch automatically
 
 ## Getting Started
 
-1. Run `./codex-switch auth --login <name>` to sign in and save a new account.
-2. Run `./codex-switch auth <name>` if you only want to save the account already active in `~/.codex/auth.json`.
-3. Use `./codex-switch list` to compare usage across accounts.
-4. Use `./codex-switch use` to pick a profile interactively, or `./codex-switch use <name>` to switch directly.
-5. Run `./codex-switch watch` if you want foreground auto-switching based on your configured thresholds.
+1. Run `codex-switch auth --login <name>` to sign in and save a new account.
+2. Run `codex-switch auth <name>` if you only want to save the account already active in `~/.codex/auth.json`.
+3. Use `codex-switch list` to compare usage across accounts.
+4. Use `codex-switch use` to pick a profile interactively, or `codex-switch use <name>` to switch directly.
+5. Run `codex-switch watch` if you want foreground auto-switching based on your configured thresholds.
 
 ## Configuration
 
