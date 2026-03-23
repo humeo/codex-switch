@@ -91,13 +91,13 @@ active_profile = ""
 auto_check = true
 
 [watch]
-interval_minutes = 5
 primary_threshold_percent = 90
 secondary_threshold_percent = 95
 notify = true
 ```
 
 `auto_check = true` is the default, so `list` and `status` try to fetch fresh quota data unless you disable it in config. `--no-check` forces cache-only output for that invocation.
+`watch` no longer uses fixed interval polling. Existing `interval_minutes` values in older configs can be left in place, but they are ignored by the event-driven watcher.
 
 ## How It Works
 
@@ -109,7 +109,10 @@ notify = true
 - Saved profiles are stored as raw JSON copies in `~/.codex-switch/profiles/<name>.json`.
 - Quota checks use `POST https://chatgpt.com/backend-api/codex/responses` and read codex quota headers from the response.
 - If a quota check returns `401`, the refresh flow can request new tokens from `https://auth.openai.com/oauth/token` and rewrite the stored profile JSON with updated tokens.
-- `watch` compares the current account against the other saved accounts and only switches when another profile has lower weekly usage.
+- `watch` performs one startup calibration, then watches local Codex session files under `~/.codex/sessions/`.
+- When a local `token_count` event shows threshold pressure, `watch` confirms the active profile with a direct quota probe before checking saved candidates.
+- `watch` only switches when another saved profile has lower weekly usage.
+- `watch` stores runtime state in `~/.codex-switch/watch-state.toml` and retains `watch-checks.jsonl` and `watch.log` for 7 days.
 
 </details>
 
@@ -121,6 +124,7 @@ notify = true
 - `list` and the `use` selector both show `used` and `left` percentages; `SRC` tells you whether a row came from a live check or cached quota data.
 - `list --no-check` and `status --no-check` read cached quota data from `~/.codex-switch/config.toml`.
 - `remove <name>` refuses to delete the active profile unless you pass `--force`.
+- `watch` is event-driven: it does one startup calibration, then reacts to local Codex session events instead of fixed-interval quota polling.
 
 ## FAQ
 

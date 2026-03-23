@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"codex-switch/internal/config"
 	"codex-switch/internal/quota"
@@ -56,6 +58,24 @@ type fakeNotifier struct {
 func (f *fakeNotifier) Notify(title, body string) error {
 	f.calls = append(f.calls, [2]string{title, body})
 	return f.err
+}
+
+type sequencedQuotaChecker struct {
+	responses map[string][]quota.Snapshot
+	calls     []string
+}
+
+func (s *sequencedQuotaChecker) Check(_ context.Context, tokens quota.Tokens, _ string) (quota.Snapshot, error) {
+	s.calls = append(s.calls, tokens.AccessToken)
+	queue := s.responses[tokens.AccessToken]
+	if len(queue) == 0 {
+		return quota.Snapshot{}, fmt.Errorf("missing snapshot for %q", tokens.AccessToken)
+	}
+	snapshot := queue[0]
+	if len(queue) > 1 {
+		s.responses[tokens.AccessToken] = queue[1:]
+	}
+	return snapshot, nil
 }
 
 func rawProfile(t *testing.T, accessToken, accountID string) []byte {
@@ -197,5 +217,164 @@ func TestRunOnceReportsAllAccountsDepletedWhenNoBetterCandidateExists(t *testing
 	}
 	if got := logger.String(); !strings.Contains(strings.ToLower(got), "depleted") {
 		t.Fatalf("logger output = %q, want depleted message", got)
+	}
+}
+
+func TestRunPerformsStartupCalibrationOnce(t *testing.T) {
+	cfg := config.Default()
+	cfg.Watch.PrimaryThresholdPercent = 90
+	cfg.Watch.SecondaryThresholdPercent = 95
+
+	checker := &sequencedQuotaChecker{responses: map[string][]quota.Snapshot{
+		"alpha-token": {{PrimaryUsedPercent: 15, SecondaryUsedPercent: 20}},
+	}}
+	events := make(chan TokenCountEvent)
+	close(events)
+
+	svc := Service{
+		Profiles:      fakeProfileLoader{raw: map[string][]byte{"alpha": rawProfile(t, "alpha-token", "acct-alpha")}},
+		QuotaClient:   checker,
+		Switcher:      &fakeSwitcher{},
+		Notifier:      &fakeNotifier{},
+		TriggerEvents: events,
+	}
+
+	if err := svc.Run(context.Background(), cfg, "alpha", []string{"alpha"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := checker.calls, []string{"alpha-token"}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("quota calls = %v, want %v", got, want)
+	}
+}
+
+func TestTriggeredEventConfirmsActiveBeforeCheckingCandidates(t *testing.T) {
+	cfg := config.Default()
+	cfg.Watch.PrimaryThresholdPercent = 90
+	cfg.Watch.SecondaryThresholdPercent = 95
+
+	checker := &sequencedQuotaChecker{responses: map[string][]quota.Snapshot{
+		"alpha-token": {
+			{PrimaryUsedPercent: 15, SecondaryUsedPercent: 20},
+			{PrimaryUsedPercent: 93, SecondaryUsedPercent: 96},
+		},
+		"beta-token": {{PrimaryUsedPercent: 10, SecondaryUsedPercent: 30}},
+	}}
+	events := make(chan TokenCountEvent, 1)
+	events <- TokenCountEvent{PrimaryUsedPercent: 91, SecondaryUsedPercent: 50}
+	close(events)
+	switcher := &fakeSwitcher{}
+
+	svc := Service{
+		Profiles: fakeProfileLoader{raw: map[string][]byte{
+			"alpha": rawProfile(t, "alpha-token", "acct-alpha"),
+			"beta":  rawProfile(t, "beta-token", "acct-beta"),
+		}},
+		QuotaClient:   checker,
+		Switcher:      switcher,
+		Notifier:      &fakeNotifier{},
+		TriggerEvents: events,
+	}
+
+	if err := svc.Run(context.Background(), cfg, "alpha", []string{"alpha", "beta"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := checker.calls, []string{"alpha-token", "alpha-token", "beta-token"}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("quota calls = %v, want %v", got, want)
+	}
+	if got, want := switcher.calls, []string{"beta"}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("switch calls = %v, want %v", got, want)
+	}
+}
+
+func TestTriggeredEventDoesNotProbeCandidatesWhenConfirmationFallsBelowThreshold(t *testing.T) {
+	cfg := config.Default()
+	cfg.Watch.PrimaryThresholdPercent = 90
+	cfg.Watch.SecondaryThresholdPercent = 95
+
+	checker := &sequencedQuotaChecker{responses: map[string][]quota.Snapshot{
+		"alpha-token": {
+			{PrimaryUsedPercent: 15, SecondaryUsedPercent: 20},
+			{PrimaryUsedPercent: 60, SecondaryUsedPercent: 40},
+		},
+		"beta-token": {{PrimaryUsedPercent: 10, SecondaryUsedPercent: 30}},
+	}}
+	events := make(chan TokenCountEvent, 1)
+	events <- TokenCountEvent{PrimaryUsedPercent: 92, SecondaryUsedPercent: 20}
+	close(events)
+
+	svc := Service{
+		Profiles: fakeProfileLoader{raw: map[string][]byte{
+			"alpha": rawProfile(t, "alpha-token", "acct-alpha"),
+			"beta":  rawProfile(t, "beta-token", "acct-beta"),
+		}},
+		QuotaClient:   checker,
+		Switcher:      &fakeSwitcher{},
+		Notifier:      &fakeNotifier{},
+		TriggerEvents: events,
+	}
+
+	if err := svc.Run(context.Background(), cfg, "alpha", []string{"alpha", "beta"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := checker.calls, []string{"alpha-token", "alpha-token"}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("quota calls = %v, want %v", got, want)
+	}
+}
+
+func TestSwitchUpdatesActiveProfileAndEnforcesCooldown(t *testing.T) {
+	cfg := config.Default()
+	cfg.Watch.PrimaryThresholdPercent = 90
+	cfg.Watch.SecondaryThresholdPercent = 95
+
+	now := time.Date(2026, 3, 23, 9, 3, 31, 0, time.UTC)
+	checker := &sequencedQuotaChecker{responses: map[string][]quota.Snapshot{
+		"alpha-token": {
+			{PrimaryUsedPercent: 15, SecondaryUsedPercent: 20},
+			{PrimaryUsedPercent: 95, SecondaryUsedPercent: 97},
+		},
+		"beta-token": {{PrimaryUsedPercent: 10, SecondaryUsedPercent: 30}},
+	}}
+	events := make(chan TokenCountEvent, 2)
+	events <- TokenCountEvent{PrimaryUsedPercent: 91, SecondaryUsedPercent: 40}
+	events <- TokenCountEvent{PrimaryUsedPercent: 99, SecondaryUsedPercent: 99}
+	close(events)
+	switcher := &fakeSwitcher{}
+	statePath := filepath.Join(t.TempDir(), "watch-state.toml")
+
+	svc := Service{
+		Profiles: fakeProfileLoader{raw: map[string][]byte{
+			"alpha": rawProfile(t, "alpha-token", "acct-alpha"),
+			"beta":  rawProfile(t, "beta-token", "acct-beta"),
+		}},
+		QuotaClient:   checker,
+		Switcher:      switcher,
+		Notifier:      &fakeNotifier{},
+		TriggerEvents: events,
+		StatePath:     statePath,
+		Cooldown:      time.Minute,
+		Now: func() time.Time {
+			return now
+		},
+	}
+
+	if err := svc.Run(context.Background(), cfg, "alpha", []string{"alpha", "beta"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := checker.calls, []string{"alpha-token", "alpha-token", "beta-token"}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("quota calls = %v, want %v", got, want)
+	}
+	if got, want := switcher.calls, []string{"beta"}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("switch calls = %v, want %v", got, want)
+	}
+
+	state, err := LoadState(statePath)
+	if err != nil {
+		t.Fatalf("LoadState() error = %v", err)
+	}
+	if state.Runtime.ActiveProfile != "beta" {
+		t.Fatalf("Runtime.ActiveProfile = %q, want %q", state.Runtime.ActiveProfile, "beta")
+	}
+	if state.Runtime.CooldownUntil != now.Add(time.Minute) {
+		t.Fatalf("Runtime.CooldownUntil = %v, want %v", state.Runtime.CooldownUntil, now.Add(time.Minute))
 	}
 }
