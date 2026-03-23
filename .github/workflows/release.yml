@@ -58,6 +58,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
 
     steps:
       - name: Download build artifacts
@@ -70,10 +71,11 @@ jobs:
       - name: Create or update GitHub release
         run: |
           tag="${GITHUB_REF_NAME}"
-          if gh release view "${tag}" >/dev/null 2>&1; then
-            gh release upload "${tag}" dist/*.tar.gz --clobber
+          if gh release view "${tag}" --repo "${GH_REPO}" >/dev/null 2>&1; then
+            gh release upload "${tag}" dist/*.tar.gz --repo "${GH_REPO}" --clobber
           else
             gh release create "${tag}" dist/*.tar.gz \
+              --repo "${GH_REPO}" \
               --title "${tag}" \
               --notes "Prebuilt binaries for codex-switch."
           fi
