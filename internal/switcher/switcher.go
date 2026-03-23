@@ -1,8 +1,12 @@
 package switcher
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+
+	"codex-switch/internal/config"
+	"codex-switch/internal/profile"
 )
 
 func WriteAuthAtomically(path string, raw []byte) error {
@@ -34,5 +38,52 @@ func WriteAuthAtomically(path string, raw []byte) error {
 		cleanup()
 		return err
 	}
+	return nil
+}
+
+func SwitchProfile(cfgPath, authPath string, store profile.Store, name string) (config.Config, error) {
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return config.Config{}, err
+	}
+
+	raw, err := store.Load(name)
+	if err != nil {
+		return config.Config{}, err
+	}
+
+	if err := WriteAuthAtomically(authPath, raw); err != nil {
+		return config.Config{}, err
+	}
+
+	cfg.ActiveProfile = name
+	if err := config.Save(cfgPath, cfg); err != nil {
+		return config.Config{}, err
+	}
+
+	return cfg, nil
+}
+
+func RemoveProfile(cfgPath string, store profile.Store, name string, force bool) error {
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return err
+	}
+
+	if cfg.ActiveProfile == name && !force {
+		return fmt.Errorf("profile %q is active; use --force to remove it", name)
+	}
+
+	if err := store.Remove(name); err != nil {
+		return err
+	}
+
+	if cfg.ActiveProfile == name {
+		cfg.ActiveProfile = ""
+		if err := config.Save(cfgPath, cfg); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
