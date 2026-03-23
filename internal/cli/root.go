@@ -2,8 +2,6 @@ package cli
 
 import "github.com/spf13/cobra"
 
-type Dependencies struct{}
-
 func NewRootCommand(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "codex-switch",
