@@ -26,14 +26,6 @@ func NewRootCommand(deps Dependencies) *cobra.Command {
 	return cmd
 }
 
-func newListCommand(Dependencies) *cobra.Command {
-	return &cobra.Command{Use: "list"}
-}
-
-func newStatusCommand(Dependencies) *cobra.Command {
-	return &cobra.Command{Use: "status"}
-}
-
 func newWatchCommand(Dependencies) *cobra.Command {
 	return &cobra.Command{Use: "watch"}
 }

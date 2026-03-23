@@ -7,9 +7,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"codex-switch/internal/config"
 	"codex-switch/internal/profile"
+	"codex-switch/internal/quota"
 )
 
 type fakeAuthRunner struct {
@@ -51,6 +53,242 @@ func TestRootCommandIncludesCoreSubcommands(t *testing.T) {
 			t.Fatalf("missing subcommand %q", want)
 		}
 	}
+}
+
+func TestListCommandShowsEmptyState(t *testing.T) {
+	dir := t.TempDir()
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+
+	cmd := NewRootCommand(Dependencies{
+		ConfigPath:  filepath.Join(dir, "config.toml"),
+		ProfilesDir: filepath.Join(dir, "profiles"),
+		Stdout:      stdout,
+		Stderr:      stderr,
+	})
+	cmd.SetArgs([]string{"list"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	got := strings.TrimSpace(stdout.String())
+	want := "No profiles found. Run 'codex-switch auth <name>' to add one."
+	if got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestListCommandUsesLiveQuotaByDefault(t *testing.T) {
+	dir := t.TempDir()
+	profilesDir := filepath.Join(dir, "profiles")
+	cfgPath := filepath.Join(dir, "config.toml")
+
+	store := profile.NewStore(profilesDir)
+	writeProfile(t, store, "alpha", []byte(`{"tokens":{"access_token":"alpha-token","account_id":"acct-alpha"}}`))
+	writeProfile(t, store, "beta", []byte(`{"tokens":{"access_token":"beta-token","account_id":"acct-beta"}}`))
+	cfg := config.Default()
+	cfg.ActiveProfile = "beta"
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	calls := []string{}
+	useQuotaChecker(t, func(_ context.Context, tokens quota.Tokens, model string) (quota.Snapshot, error) {
+		calls = append(calls, tokens.AccessToken+"|"+model)
+		switch tokens.AccessToken {
+		case "alpha-token":
+			return quota.Snapshot{
+				Plan:                 "plus",
+				PrimaryUsedPercent:   2,
+				SecondaryUsedPercent: 30,
+				PrimaryResetAfter:    2 * time.Hour,
+				SecondaryResetAfter:  48 * time.Hour,
+			}, nil
+		case "beta-token":
+			return quota.Snapshot{
+				Plan:                 "plus",
+				PrimaryUsedPercent:   1,
+				SecondaryUsedPercent: 12,
+				PrimaryResetAfter:    90 * time.Minute,
+				SecondaryResetAfter:  24 * time.Hour,
+			}, nil
+		default:
+			t.Fatalf("unexpected access token %q", tokens.AccessToken)
+			return quota.Snapshot{}, nil
+		}
+	})
+
+	stdout := &bytes.Buffer{}
+	cmd := NewRootCommand(Dependencies{
+		ConfigPath:  cfgPath,
+		ProfilesDir: profilesDir,
+		Stdout:      stdout,
+	})
+	cmd.SetArgs([]string{"list"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	got := stdout.String()
+	if !strings.Contains(got, "NAME") || !strings.Contains(got, "WEEKLY USED") {
+		t.Fatalf("stdout = %q, want list header", got)
+	}
+	betaLine := lineContaining(got, "beta")
+	alphaLine := lineContaining(got, "alpha")
+	if betaLine == "" || alphaLine == "" {
+		t.Fatalf("stdout = %q, want beta and alpha rows", got)
+	}
+	if strings.Index(got, betaLine) > strings.Index(got, alphaLine) {
+		t.Fatalf("stdout = %q, want beta before alpha", got)
+	}
+	if !strings.Contains(betaLine, "*") {
+		t.Fatalf("beta row = %q, want active marker", betaLine)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("quota calls = %#v, want two live checks", calls)
+	}
+
+	gotCfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if gotCfg.Cache["beta"].SecondaryUsedPercent != 12 {
+		t.Fatalf("cache = %+v, want live snapshot persisted", gotCfg.Cache["beta"])
+	}
+}
+
+func TestListCommandNoCheckUsesCachedSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	profilesDir := filepath.Join(dir, "profiles")
+	cfgPath := filepath.Join(dir, "config.toml")
+
+	store := profile.NewStore(profilesDir)
+	writeProfile(t, store, "cached", []byte(`{"tokens":{"access_token":"cached-token","account_id":"acct-cached"}}`))
+	cfg := config.Default()
+	cfg.Cache["cached"] = config.QuotaCache{
+		Plan:                       "plus",
+		PrimaryUsedPercent:         7,
+		SecondaryUsedPercent:       14,
+		PrimaryResetAfterSeconds:   int64((3 * time.Hour).Seconds()),
+		SecondaryResetAfterSeconds: int64((6 * time.Hour).Seconds()),
+	}
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	called := false
+	useQuotaChecker(t, func(_ context.Context, _ quota.Tokens, _ string) (quota.Snapshot, error) {
+		called = true
+		return quota.Snapshot{}, nil
+	})
+
+	stdout := &bytes.Buffer{}
+	cmd := NewRootCommand(Dependencies{
+		ConfigPath:  cfgPath,
+		ProfilesDir: profilesDir,
+		Stdout:      stdout,
+	})
+	cmd.SetArgs([]string{"list", "--no-check"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if called {
+		t.Fatal("quota checker called, want cached-only output")
+	}
+	got := stdout.String()
+	for _, want := range []string{"cached", "plus", "7%", "14%"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("stdout = %q, want %q", got, want)
+		}
+	}
+}
+
+func TestStatusCommandShowsActiveProfileDetails(t *testing.T) {
+	dir := t.TempDir()
+	profilesDir := filepath.Join(dir, "profiles")
+	cfgPath := filepath.Join(dir, "config.toml")
+
+	store := profile.NewStore(profilesDir)
+	writeProfile(t, store, "work", []byte(`{"tokens":{"access_token":"work-token","account_id":"acct-work"}}`))
+	cfg := config.Default()
+	cfg.ActiveProfile = "work"
+	cfg.Cache["work"] = config.QuotaCache{
+		Plan:                       "plus",
+		PrimaryUsedPercent:         2,
+		SecondaryUsedPercent:       86,
+		PrimaryResetAfterSeconds:   int64((4*time.Hour + 20*time.Minute).Seconds()),
+		SecondaryResetAfterSeconds: int64((2*24*time.Hour + 9*time.Hour).Seconds()),
+		PrimaryResetAt:             time.Date(2026, 3, 23, 14, 31, 0, 0, time.UTC),
+		SecondaryResetAt:           time.Date(2026, 3, 25, 18, 42, 0, 0, time.UTC),
+	}
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	called := false
+	useQuotaChecker(t, func(_ context.Context, _ quota.Tokens, _ string) (quota.Snapshot, error) {
+		called = true
+		return quota.Snapshot{}, nil
+	})
+
+	stdout := &bytes.Buffer{}
+	cmd := NewRootCommand(Dependencies{
+		ConfigPath:  cfgPath,
+		ProfilesDir: profilesDir,
+		Stdout:      stdout,
+	})
+	cmd.SetArgs([]string{"status", "--no-check"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if called {
+		t.Fatal("quota checker called, want cached-only output")
+	}
+	got := stdout.String()
+	for _, want := range []string{
+		"Active: work (plus)",
+		"Used: 2%",
+		"Used: 86%",
+		"Resets in: 4h 20m (at 2026-03-23 14:31)",
+		"Resets in: 2d 9h (at 2026-03-25 18:42)",
+		"Credits: none",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("stdout = %q, want %q", got, want)
+		}
+	}
+}
+
+func writeProfile(t *testing.T, store profile.Store, name string, raw []byte) {
+	t.Helper()
+	if err := store.Save(name, raw); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+}
+
+func useQuotaChecker(t *testing.T, checker func(context.Context, quota.Tokens, string) (quota.Snapshot, error)) {
+	t.Helper()
+	orig := quotaCheckerFactory
+	quotaCheckerFactory = func() quotaChecker { return quotaCheckerFunc(checker) }
+	t.Cleanup(func() { quotaCheckerFactory = orig })
+}
+
+func lineContaining(s, substr string) string {
+	for _, line := range strings.Split(s, "\n") {
+		if strings.Contains(line, substr) {
+			return line
+		}
+	}
+	return ""
 }
 
 func TestUseCommand(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"time"
 
 	toml "github.com/pelletier/go-toml/v2"
 )
@@ -24,9 +25,15 @@ type WatchConfig struct {
 }
 
 type QuotaCache struct {
-	Plan                 string `toml:"plan"`
-	PrimaryUsedPercent   int    `toml:"primary_used_percent"`
-	SecondaryUsedPercent int    `toml:"secondary_used_percent"`
+	Plan                       string    `toml:"plan"`
+	PrimaryUsedPercent         int       `toml:"primary_used_percent"`
+	SecondaryUsedPercent       int       `toml:"secondary_used_percent"`
+	PrimaryResetAfterSeconds   int64     `toml:"primary_reset_after_seconds"`
+	SecondaryResetAfterSeconds int64     `toml:"secondary_reset_after_seconds"`
+	PrimaryResetAt             time.Time `toml:"primary_reset_at"`
+	SecondaryResetAt           time.Time `toml:"secondary_reset_at"`
+	HasCredits                 bool      `toml:"has_credits"`
+	CreditsBalance             string    `toml:"credits_balance"`
 }
 
 func Default() Config {
