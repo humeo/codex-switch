@@ -26,10 +26,6 @@ func NewRootCommand(deps Dependencies) *cobra.Command {
 	return cmd
 }
 
-func newAuthCommand(Dependencies) *cobra.Command {
-	return &cobra.Command{Use: "auth"}
-}
-
 func newListCommand(Dependencies) *cobra.Command {
 	return &cobra.Command{Use: "list"}
 }
