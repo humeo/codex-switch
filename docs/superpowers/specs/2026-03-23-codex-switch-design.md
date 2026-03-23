@@ -50,7 +50,7 @@ check_model = "gpt-5.4-mini"
 active_profile = ""
 
 # Auto-check quota when listing (can be disabled)
-auto_check = true
+auto_check = false
 
 # Watch settings (watch is off by default, must be explicitly started)
 [watch]

@@ -42,7 +42,7 @@
 
 - Store cached quota data in `config.toml` under per-profile cache sections so `list --no-check` and `status --no-check` can render without adding extra top-level state files.
 - Keep `profiles/<name>.json` byte-for-byte compatible with `~/.codex/auth.json`; do not add cache metadata to profile JSON.
-- Default `list` behavior is live quota lookup. `--no-check` skips network calls for that invocation. `auto_check = true` controls default behavior and can be disabled globally.
+- Default `list` behavior is cached quota output. `auto_check = false` controls that default, and users can enable live checks globally if they want them.
 - Treat the check model as config-driven. The binary should ship with a reasonable default string, but all request code must read from config instead of hardcoding the model at call sites.
 - Prefer table-driven tests plus `httptest.Server` for quota and refresh flows. Use temp directories for all filesystem tests.
 
@@ -153,8 +153,8 @@ func TestLoadCreatesDefaultsWhenMissing(t *testing.T) {
 		t.Fatalf("Load() error = %v", err)
 	}
 
-	if !cfg.AutoCheck {
-		t.Fatalf("AutoCheck default = false, want true")
+	if cfg.AutoCheck {
+		t.Fatalf("AutoCheck default = true, want false")
 	}
 	if cfg.CheckModel == "" {
 		t.Fatal("CheckModel should have a default")
@@ -205,7 +205,7 @@ func Default() Config {
 	return Config{
 		CheckModel:   "gpt-5.4-mini",
 		ActiveProfile: "",
-		AutoCheck:    true,
+		AutoCheck:    false,
 		Watch: WatchConfig{
 			IntervalMinutes:          5,
 			PrimaryThresholdPercent:  90,
@@ -660,7 +660,7 @@ Expected: FAIL.
 - [ ] **Step 3: Implement command behavior**
 
 Key rules:
-- `list` checks live quotas unless `--no-check` is set or config `auto_check` is false
+- `list` checks live quotas only when config `auto_check` is true and `--no-check` is not set
 - live snapshots update the config cache
 - `status` targets the active profile and supports `--no-check`
 - expired profiles render a warning indicator instead of causing the whole command to fail
