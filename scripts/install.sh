@@ -5,6 +5,9 @@ BINARY_NAME="codex-switch"
 REPO="${REPO:-humeo/codex-switch}"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 VERSION="${VERSION:-latest}"
+ZSH_COMPLETION_DIR="${ZSH_COMPLETION_DIR:-$HOME/.zsh/completions}"
+BASH_COMPLETION_DIR="${BASH_COMPLETION_DIR:-$HOME/.local/share/bash-completion/completions}"
+FISH_COMPLETION_DIR="${FISH_COMPLETION_DIR:-$HOME/.config/fish/completions}"
 
 need_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -40,6 +43,24 @@ path_contains() {
     *":$1:"*) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+install_completion() {
+  shell_name="$1"
+  output_dir="$2"
+  output_name="$3"
+  output_path="${output_dir}/${output_name}"
+
+  mkdir -p "$output_dir"
+  if "${INSTALL_DIR}/${BINARY_NAME}" completion "$shell_name" >"$output_path"; then
+    chmod 0644 "$output_path"
+    echo "Installed ${shell_name} completion to ${output_path}"
+    return 0
+  fi
+
+  rm -f "$output_path"
+  echo "Warning: failed to install ${shell_name} completion" >&2
+  return 0
 }
 
 need_cmd curl
@@ -78,6 +99,11 @@ cp "${TMPDIR}/${BINARY_NAME}" "${INSTALL_DIR}/${BINARY_NAME}"
 chmod 0755 "${INSTALL_DIR}/${BINARY_NAME}"
 
 echo "Installed ${BINARY_NAME} to ${INSTALL_DIR}/${BINARY_NAME}"
+install_completion "zsh" "$ZSH_COMPLETION_DIR" "_${BINARY_NAME}"
+install_completion "bash" "$BASH_COMPLETION_DIR" "${BINARY_NAME}"
+install_completion "fish" "$FISH_COMPLETION_DIR" "${BINARY_NAME}.fish"
+
 if ! path_contains "$INSTALL_DIR"; then
   echo "Add ${INSTALL_DIR} to your PATH to run ${BINARY_NAME} without a full path."
 fi
+echo "Restart your shell after install if completions do not appear immediately."

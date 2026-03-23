@@ -26,7 +26,26 @@ func TestInstallScriptInstallsBinaryFromReleaseArchive(t *testing.T) {
 	}
 
 	archivePath := filepath.Join(assetsDir, releaseArchiveName())
-	if err := writeTarGz(archivePath, "codex-switch", []byte("#!/bin/sh\necho installed\n"), 0o755); err != nil {
+	if err := writeTarGz(archivePath, "codex-switch", []byte(`#!/bin/sh
+if [ "$1" = "completion" ]; then
+  case "$2" in
+    zsh)
+      printf '%s\n' '#compdef codex-switch'
+      ;;
+    bash)
+      printf '%s\n' '# bash completion for codex-switch'
+      ;;
+    fish)
+      printf '%s\n' '# fish completion for codex-switch'
+      ;;
+    *)
+      exit 1
+      ;;
+  esac
+  exit 0
+fi
+echo installed
+`), 0o755); err != nil {
 		t.Fatalf("writeTarGz() error = %v", err)
 	}
 
@@ -54,6 +73,19 @@ func TestInstallScriptInstallsBinaryFromReleaseArchive(t *testing.T) {
 	if !strings.Contains(string(out), "Installed codex-switch to") {
 		t.Fatalf("stdout = %q, want install confirmation", out)
 	}
+	if !strings.Contains(string(out), "Installed zsh completion to") {
+		t.Fatalf("stdout = %q, want zsh completion confirmation", out)
+	}
+	if !strings.Contains(string(out), "Installed bash completion to") {
+		t.Fatalf("stdout = %q, want bash completion confirmation", out)
+	}
+	if !strings.Contains(string(out), "Installed fish completion to") {
+		t.Fatalf("stdout = %q, want fish completion confirmation", out)
+	}
+
+	assertFileContains(t, filepath.Join(homeDir, ".zsh", "completions", "_codex-switch"), "#compdef codex-switch")
+	assertFileContains(t, filepath.Join(homeDir, ".local", "share", "bash-completion", "completions", "codex-switch"), "# bash completion for codex-switch")
+	assertFileContains(t, filepath.Join(homeDir, ".config", "fish", "completions", "codex-switch.fish"), "# fish completion for codex-switch")
 }
 
 func TestUninstallScriptRemovesBinaryAndOptionallyData(t *testing.T) {
@@ -73,6 +105,7 @@ func TestUninstallScriptRemovesBinaryAndOptionallyData(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(installDir, "codex-switch"), []byte("bin"), 0o755); err != nil {
 			t.Fatalf("WriteFile(binary) error = %v", err)
 		}
+		writeCompletionFixtures(t, homeDir)
 
 		cmd := exec.Command("bash", filepath.Join(root, "scripts", "uninstall.sh"))
 		cmd.Env = append(os.Environ(),
@@ -87,6 +120,9 @@ func TestUninstallScriptRemovesBinaryAndOptionallyData(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(installDir, "codex-switch")); !os.IsNotExist(err) {
 			t.Fatalf("binary still exists, stat err = %v", err)
 		}
+		assertNotExists(t, filepath.Join(homeDir, ".zsh", "completions", "_codex-switch"))
+		assertNotExists(t, filepath.Join(homeDir, ".local", "share", "bash-completion", "completions", "codex-switch"))
+		assertNotExists(t, filepath.Join(homeDir, ".config", "fish", "completions", "codex-switch.fish"))
 		if _, err := os.Stat(dataDir); err != nil {
 			t.Fatalf("data dir stat error = %v, want preserved", err)
 		}
@@ -109,6 +145,7 @@ func TestUninstallScriptRemovesBinaryAndOptionallyData(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(installDir, "codex-switch"), []byte("bin"), 0o755); err != nil {
 			t.Fatalf("WriteFile(binary) error = %v", err)
 		}
+		writeCompletionFixtures(t, homeDir)
 
 		cmd := exec.Command("bash", filepath.Join(root, "scripts", "uninstall.sh"))
 		cmd.Env = append(os.Environ(),
@@ -124,10 +161,51 @@ func TestUninstallScriptRemovesBinaryAndOptionallyData(t *testing.T) {
 		if _, err := os.Stat(dataDir); !os.IsNotExist(err) {
 			t.Fatalf("data dir still exists, stat err = %v", err)
 		}
+		assertNotExists(t, filepath.Join(homeDir, ".zsh", "completions", "_codex-switch"))
+		assertNotExists(t, filepath.Join(homeDir, ".local", "share", "bash-completion", "completions", "codex-switch"))
+		assertNotExists(t, filepath.Join(homeDir, ".config", "fish", "completions", "codex-switch.fish"))
 		if !strings.Contains(string(out), "Removed user data") {
 			t.Fatalf("stdout = %q, want removed-data notice", out)
 		}
 	})
+}
+
+func writeCompletionFixtures(t *testing.T, homeDir string) {
+	t.Helper()
+
+	files := map[string]string{
+		filepath.Join(homeDir, ".zsh", "completions", "_codex-switch"):                                    "#compdef codex-switch\n",
+		filepath.Join(homeDir, ".local", "share", "bash-completion", "completions", "codex-switch"):      "# bash completion for codex-switch\n",
+		filepath.Join(homeDir, ".config", "fish", "completions", "codex-switch.fish"):                    "# fish completion for codex-switch\n",
+	}
+	for path, content := range files {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("MkdirAll(%q) error = %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("WriteFile(%q) error = %v", path, err)
+		}
+	}
+}
+
+func assertFileContains(t *testing.T, path, want string) {
+	t.Helper()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", path, err)
+	}
+	if !strings.Contains(string(data), want) {
+		t.Fatalf("file %q = %q, want to contain %q", path, data, want)
+	}
+}
+
+func assertNotExists(t *testing.T, path string) {
+	t.Helper()
+
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("%q still exists, stat err = %v", path, err)
+	}
 }
 
 func repoRoot(t *testing.T) string {

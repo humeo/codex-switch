@@ -39,6 +39,20 @@ Install the latest release to `~/.local/bin`:
 curl -sSL https://raw.githubusercontent.com/humeo/codex-switch/main/scripts/install.sh | bash
 ```
 
+The install script also writes user-level completion files for:
+
+- `zsh` at `~/.zsh/completions/_codex-switch`
+- `bash` at `~/.local/share/bash-completion/completions/codex-switch`
+- `fish` at `~/.config/fish/completions/codex-switch.fish`
+
+If you use `zsh` and completions still do not load, add this once to `~/.zshrc` and restart your shell:
+
+```bash
+fpath=(~/.zsh/completions $fpath)
+autoload -Uz compinit
+compinit
+```
+
 Install a specific release:
 
 ```bash
@@ -79,6 +93,7 @@ curl -sSL https://raw.githubusercontent.com/humeo/codex-switch/main/scripts/unin
 ```
 
 The uninstall script does not touch `~/.codex/auth.json`.
+It also removes the installed completion files.
 
 ## See It Work
 
