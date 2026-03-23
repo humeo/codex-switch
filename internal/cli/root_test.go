@@ -12,6 +12,7 @@ import (
 	"codex-switch/internal/config"
 	"codex-switch/internal/profile"
 	"codex-switch/internal/quota"
+	"codex-switch/internal/watcher"
 )
 
 type fakeAuthRunner struct {
@@ -293,6 +294,71 @@ func TestStatusCommandShowsActiveProfileDetails(t *testing.T) {
 	}
 }
 
+func TestWatchCommandPrintsEventDrivenStartupMode(t *testing.T) {
+	dir := t.TempDir()
+	profilesDir := filepath.Join(dir, "profiles")
+	cfgPath := filepath.Join(dir, "config.toml")
+	statePath := filepath.Join(dir, "watch-state.toml")
+	checksPath := filepath.Join(dir, "watch-checks.jsonl")
+	logPath := filepath.Join(dir, "watch.log")
+
+	store := profile.NewStore(profilesDir)
+	writeProfile(t, store, "alpha", []byte(`{"tokens":{"access_token":"alpha-token","account_id":"acct-alpha"}}`))
+
+	cfg := config.Default()
+	cfg.ActiveProfile = "alpha"
+	cfg.Watch.Notify = false
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	useWatchQuotaChecker(t, func(_ context.Context, tokens quota.Tokens, model string) (quota.Snapshot, error) {
+		if tokens.AccessToken != "alpha-token" {
+			t.Fatalf("access token = %q, want alpha-token", tokens.AccessToken)
+		}
+		if model != cfg.CheckModel {
+			t.Fatalf("model = %q, want %q", model, cfg.CheckModel)
+		}
+		return quota.Snapshot{
+			Plan:                 "plus",
+			PrimaryUsedPercent:   13,
+			SecondaryUsedPercent: 40,
+		}, nil
+	})
+
+	events := make(chan watcher.TokenCountEvent)
+	close(events)
+
+	stdout := &bytes.Buffer{}
+	cmd := NewRootCommand(Dependencies{
+		ConfigPath:         cfgPath,
+		ProfilesDir:        profilesDir,
+		AuthPath:           filepath.Join(dir, "auth.json"),
+		CodexSessionsDir:   filepath.Join(dir, "sessions"),
+		WatchStatePath:     statePath,
+		WatchChecksPath:    checksPath,
+		WatchLogPath:       logPath,
+		WatchTriggerEvents: events,
+		Stdout:             stdout,
+	})
+	cmd.SetArgs([]string{"watch"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	got := stdout.String()
+	if !strings.Contains(got, "watching local Codex session events") {
+		t.Fatalf("stdout = %q, want session event mode", got)
+	}
+	if !strings.Contains(got, "startup calibration complete for alpha") {
+		t.Fatalf("stdout = %q, want startup calibration summary", got)
+	}
+	if strings.Contains(got, "watching every") {
+		t.Fatalf("stdout = %q, want no interval polling output", got)
+	}
+}
+
 func writeProfile(t *testing.T, store profile.Store, name string, raw []byte) {
 	t.Helper()
 	if err := store.Save(name, raw); err != nil {
@@ -305,6 +371,19 @@ func useQuotaChecker(t *testing.T, checker func(context.Context, quota.Tokens, s
 	orig := quotaCheckerFactory
 	quotaCheckerFactory = func() quotaChecker { return quotaCheckerFunc(checker) }
 	t.Cleanup(func() { quotaCheckerFactory = orig })
+}
+
+type fakeWatchQuotaChecker func(context.Context, quota.Tokens, string) (quota.Snapshot, error)
+
+func (f fakeWatchQuotaChecker) Check(ctx context.Context, tokens quota.Tokens, model string) (quota.Snapshot, error) {
+	return f(ctx, tokens, model)
+}
+
+func useWatchQuotaChecker(t *testing.T, checker fakeWatchQuotaChecker) {
+	t.Helper()
+	orig := watchQuotaCheckerFactory
+	watchQuotaCheckerFactory = func() watcher.QuotaChecker { return checker }
+	t.Cleanup(func() { watchQuotaCheckerFactory = orig })
 }
 
 func lineContaining(s, substr string) string {

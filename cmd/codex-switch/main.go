@@ -7,7 +7,11 @@ import (
 )
 
 func main() {
-	if err := cli.NewRootCommand(cli.Dependencies{}).Execute(); err != nil {
+	deps, err := cli.DefaultDependencies()
+	if err != nil {
+		os.Exit(1)
+	}
+	if err := cli.NewRootCommand(deps).Execute(); err != nil {
 		os.Exit(1)
 	}
 }
