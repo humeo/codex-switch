@@ -65,6 +65,16 @@ Install to a custom directory:
 curl -sSL https://raw.githubusercontent.com/humeo/codex-switch/main/scripts/install.sh | INSTALL_DIR=/usr/local/bin bash
 ```
 
+## Update
+
+If you installed from a release, update in place with:
+
+```bash
+codex-switch update
+```
+
+This replaces the current `codex-switch` binary with the latest GitHub release for your platform and refreshes `zsh`, `bash`, and `fish` completions. It does not modify `~/.codex-switch/` data.
+
 If you publish this project under a different GitHub owner, override `REPO`:
 
 ```bash
@@ -100,6 +110,7 @@ It also removes the installed completion files.
 ```text
 $ codex-switch auth --login work
 warning: codex logout and codex login will run now
+If the browser did not open automatically, open this link manually: https://auth.openai.com/...
 saved profile: work
 
 $ codex-switch auth --login personal
@@ -167,15 +178,18 @@ use [name]           Activate a saved profile or open the selector
 status [--no-check]  Show active profile, quota, and watch summary
 remove <name>        Remove a saved profile
 watch                Watch quota usage and switch automatically
+update               Update codex-switch to the latest release
 ```
 
 ## Getting Started
 
 1. Run `codex-switch auth --login <name>` to sign in and save a new account.
+   If `codex login` does not open a browser automatically, `codex-switch` prints the login URL so you can open it manually.
 2. Run `codex-switch auth <name>` if you only want to save the account already active in `~/.codex/auth.json`.
 3. Use `codex-switch list` to compare usage across accounts.
 4. Use `codex-switch use` to pick a profile interactively, or `codex-switch use <name>` to switch directly.
 5. Run `codex-switch watch` if you want foreground auto-switching based on your configured thresholds.
+6. Run `codex-switch update` to upgrade an existing release install.
 
 ## Configuration
 
@@ -214,9 +228,10 @@ notify = true
 
 ## Reference
 
-- `auth --login` temporarily runs `codex logout` and `codex login`, then restores the original `~/.codex/auth.json`.
+- `auth --login` temporarily runs `codex logout` and `codex login`, saves the imported account, and keeps `~/.codex/auth.json` aligned with the active saved profile. If the login flow prints a browser URL, `codex-switch` echoes it back as a manual-open fallback.
 - Plain `auth` saves the account already present in `~/.codex/auth.json`; if no current session exists, it tells you to use `auth --login`.
 - `use` without a profile name opens an inline Bubble Tea selector with arrow keys or `j`/`k`; `use <name>` keeps the non-interactive path for scripts.
+- `update` downloads the latest GitHub release asset for the current `darwin/linux` and `amd64/arm64` platform, replaces the current executable in place, and refreshes shell completions.
 - `list`, the `use` selector, and the `status` summary bar all show `SRC`. `SRC LIVE` means the quota data came from a fresh network check; `SRC CACHE` means it came from the local cache in `~/.codex-switch/config.toml`.
 - `list --no-check` and `status --no-check` read cached quota data from `~/.codex-switch/config.toml`.
 - `status` renders a compact terminal dashboard with a summary bar plus `Quota`, `Watch`, `Recent Switch`, and `Profiles` cards.
