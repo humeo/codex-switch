@@ -18,14 +18,24 @@ import (
 )
 
 type fakeAuthRunner struct {
-	t         *testing.T
-	authPath  string
-	loginData []byte
-	calls     [][]string
-	err       error
+	t           *testing.T
+	authPath    string
+	loginData   []byte
+	loginStdout string
+	loginStderr string
+	calls       [][]string
+	err         error
 }
 
 func (r *fakeAuthRunner) Run(_ context.Context, name string, args ...string) error {
+	return r.run(name, nil, nil, args...)
+}
+
+func (r *fakeAuthRunner) RunStreaming(_ context.Context, stdout, stderr io.Writer, name string, args ...string) error {
+	return r.run(name, stdout, stderr, args...)
+}
+
+func (r *fakeAuthRunner) run(name string, stdout, stderr io.Writer, args ...string) error {
 	r.calls = append(r.calls, append([]string{name}, args...))
 	if name != "codex" {
 		r.t.Fatalf("runner name = %q, want codex", name)
@@ -34,6 +44,16 @@ func (r *fakeAuthRunner) Run(_ context.Context, name string, args ...string) err
 		return r.err
 	}
 	if len(args) == 1 && args[0] == "login" {
+		if stdout != nil && r.loginStdout != "" {
+			if _, err := io.WriteString(stdout, r.loginStdout); err != nil {
+				return err
+			}
+		}
+		if stderr != nil && r.loginStderr != "" {
+			if _, err := io.WriteString(stderr, r.loginStderr); err != nil {
+				return err
+			}
+		}
 		if err := os.WriteFile(r.authPath, r.loginData, 0o600); err != nil {
 			r.t.Fatalf("WriteFile() error = %v", err)
 		}
@@ -76,7 +96,7 @@ func TestRootCommandIncludesCoreSubcommands(t *testing.T) {
 		names[child.Name()] = true
 	}
 
-	for _, want := range []string{"auth", "list", "use", "status", "watch", "remove"} {
+	for _, want := range []string{"auth", "list", "use", "status", "watch", "remove", "update"} {
 		if !names[want] {
 			t.Fatalf("missing subcommand %q", want)
 		}
@@ -1029,8 +1049,10 @@ func TestAuthCommandLogsInWhenNoCurrentAuthAndUsesExplicitName(t *testing.T) {
 		t.Fatalf("Execute() error = %v", err)
 	}
 
-	if _, err := os.Stat(authPath); !os.IsNotExist(err) {
-		t.Fatalf("auth.json should be removed after import when no original auth existed, got err=%v", err)
+	if got, err := os.ReadFile(authPath); err != nil {
+		t.Fatalf("ReadFile() auth error = %v", err)
+	} else if string(got) != string(newAuth) {
+		t.Fatalf("auth.json = %s, want %s", got, newAuth)
 	}
 	if _, err := os.Stat(authPath + ".bak"); !os.IsNotExist(err) {
 		t.Fatalf("auth.json.bak should be removed after success, got err=%v", err)
@@ -1055,6 +1077,120 @@ func TestAuthCommandLogsInWhenNoCurrentAuthAndUsesExplicitName(t *testing.T) {
 	}
 	if got := stderr.String(); !strings.Contains(got, "logout") || !strings.Contains(got, "login") {
 		t.Fatalf("stderr = %q, want warning before auth flow", got)
+	}
+}
+
+func TestAuthCommandLoginRestoresActiveProfileAfterImport(t *testing.T) {
+	dir := t.TempDir()
+	profilesDir := filepath.Join(dir, "profiles")
+	authPath := filepath.Join(dir, "auth.json")
+	cfgPath := filepath.Join(dir, "config.toml")
+
+	store := profile.NewStore(profilesDir)
+	activeAuth := []byte(`{"auth_mode":"chatgpt","tokens":{"access_token":"active"}}`)
+	if err := store.Save("active", activeAuth); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.ActiveProfile = "active"
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	newAuth := []byte(`{"auth_mode":"chatgpt","tokens":{"access_token":"new"}}`)
+	runner := &fakeAuthRunner{t: t, authPath: authPath, loginData: newAuth}
+	prober := &fakeAuthProber{email: "new-account@example.com"}
+	useAuthRunner(t, runner)
+	useAuthProber(t, prober)
+
+	cmd := NewRootCommand(Dependencies{
+		ConfigPath:  cfgPath,
+		ProfilesDir: profilesDir,
+		AuthPath:    authPath,
+	})
+	cmd.SetArgs([]string{"auth", "--login", "--name", "other"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	gotAuth, err := os.ReadFile(authPath)
+	if err != nil {
+		t.Fatalf("ReadFile() auth error = %v", err)
+	}
+	if string(gotAuth) != string(activeAuth) {
+		t.Fatalf("auth.json = %s, want %s", gotAuth, activeAuth)
+	}
+
+	gotCfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if gotCfg.ActiveProfile != "active" {
+		t.Fatalf("active_profile = %q, want active", gotCfg.ActiveProfile)
+	}
+
+	gotProfile, err := os.ReadFile(filepath.Join(profilesDir, "other.json"))
+	if err != nil {
+		t.Fatalf("ReadFile() profile error = %v", err)
+	}
+	if string(gotProfile) != string(newAuth) {
+		t.Fatalf("profile contents = %s, want %s", gotProfile, newAuth)
+	}
+}
+
+func TestAuthCommandLoginPrintsManualBrowserURL(t *testing.T) {
+	dir := t.TempDir()
+	profilesDir := filepath.Join(dir, "profiles")
+	authPath := filepath.Join(dir, "auth.json")
+	cfgPath := filepath.Join(dir, "config.toml")
+	binDir := filepath.Join(dir, "bin")
+
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = \"logout\" ]; then\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"if [ \"$1\" = \"login\" ]; then\n" +
+		"  echo 'Open this URL in your browser:' >&2\n" +
+		"  echo 'https://auth.openai.com/authorize?client_id=test-client' >&2\n" +
+		"  cat > \"" + authPath + "\" <<'EOF'\n" +
+		"{\"auth_mode\":\"chatgpt\",\"tokens\":{\"access_token\":\"new\"}}\n" +
+		"EOF\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"exit 1\n"
+	if err := os.WriteFile(filepath.Join(binDir, "codex"), []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	prober := &fakeAuthProber{email: "new-account@example.com"}
+	useAuthProber(t, prober)
+
+	stderr := &bytes.Buffer{}
+	cmd := NewRootCommand(Dependencies{
+		ConfigPath:  cfgPath,
+		ProfilesDir: profilesDir,
+		AuthPath:    authPath,
+		Stderr:      stderr,
+	})
+	cmd.SetArgs([]string{"auth", "--login", "--name", "other"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	got := stderr.String()
+	if !strings.Contains(got, "If the browser did not open automatically") {
+		t.Fatalf("stderr = %q, want manual browser hint", got)
+	}
+	if !strings.Contains(got, "https://auth.openai.com/authorize?client_id=test-client") {
+		t.Fatalf("stderr = %q, want login URL", got)
 	}
 }
 
@@ -1250,7 +1386,7 @@ func (fn authRoundTripperFunc) RoundTrip(req *http.Request) (*http.Response, err
 	return fn(req)
 }
 
-func TestAuthCommandLoginFlagReplacesTemporarySessionAndRestoresOriginalAuth(t *testing.T) {
+func TestAuthCommandLoginFlagPromotesImportedProfileWhenNoActiveProfileExists(t *testing.T) {
 	dir := t.TempDir()
 	profilesDir := filepath.Join(dir, "profiles")
 	authPath := filepath.Join(dir, "auth.json")
@@ -1282,13 +1418,20 @@ func TestAuthCommandLoginFlagReplacesTemporarySessionAndRestoresOriginalAuth(t *
 	}
 	if got, err := os.ReadFile(authPath); err != nil {
 		t.Fatalf("ReadFile() auth error = %v", err)
-	} else if string(got) != string(originalAuth) {
-		t.Fatalf("auth.json = %s, want %s", got, originalAuth)
+	} else if string(got) != string(newAuth) {
+		t.Fatalf("auth.json = %s, want %s", got, newAuth)
 	}
 	if got, err := os.ReadFile(filepath.Join(profilesDir, "other.json")); err != nil {
 		t.Fatalf("ReadFile() profile error = %v", err)
 	} else if string(got) != string(newAuth) {
 		t.Fatalf("profile contents = %s, want %s", got, newAuth)
+	}
+	gotCfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if gotCfg.ActiveProfile != "other" {
+		t.Fatalf("active_profile = %q, want other", gotCfg.ActiveProfile)
 	}
 }
 

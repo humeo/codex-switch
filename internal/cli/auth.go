@@ -12,15 +12,18 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 
 	"codex-switch/internal/config"
 	"codex-switch/internal/profile"
+	"codex-switch/internal/switcher"
 	"github.com/spf13/cobra"
 )
 
 type Runner interface {
 	Run(ctx context.Context, name string, args ...string) error
+	RunStreaming(ctx context.Context, stdout, stderr io.Writer, name string, args ...string) error
 }
 
 type execRunner struct{}
@@ -29,9 +32,18 @@ func (execRunner) Run(ctx context.Context, name string, args ...string) error {
 	return exec.CommandContext(ctx, name, args...).Run()
 }
 
+func (execRunner) RunStreaming(ctx context.Context, stdout, stderr io.Writer, name string, args ...string) error {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	return cmd.Run()
+}
+
 var authRunnerFactory = func() Runner {
 	return execRunner{}
 }
+
+var loginURLPattern = regexp.MustCompile(`https?://\S+`)
 
 type authIdentity struct {
 	Email string
@@ -188,8 +200,32 @@ func newAuthCommand(deps Dependencies) *cobra.Command {
 				return err
 			}
 
-			if firstProfile {
-				cfg.ActiveProfile = name
+			activeProfile := cfg.ActiveProfile
+			if activeProfile != "" {
+				if _, err := store.Load(activeProfile); err != nil {
+					if !os.IsNotExist(err) {
+						return err
+					}
+					activeProfile = ""
+				}
+			}
+			if activeProfile == "" || firstProfile {
+				activeProfile = name
+			}
+
+			activeRaw := raw
+			if activeProfile != name {
+				activeRaw, err = store.Load(activeProfile)
+				if err != nil {
+					return err
+				}
+			}
+			if err := switcher.WriteAuthAtomically(deps.AuthPath, activeRaw); err != nil {
+				return err
+			}
+
+			if cfg.ActiveProfile != activeProfile {
+				cfg.ActiveProfile = activeProfile
 				if err := config.Save(deps.ConfigPath, cfg); err != nil {
 					return err
 				}
@@ -257,7 +293,9 @@ func captureAuthViaLogin(ctx context.Context, stderr io.Writer, authPath string)
 	if err := runner.Run(ctx, "codex", "logout"); err != nil {
 		return nil, err
 	}
-	if err := runner.Run(ctx, "codex", "login"); err != nil {
+	detector := newLoginURLHintWriter(stderr)
+	stream := io.MultiWriter(stderr, detector)
+	if err := runner.RunStreaming(ctx, stream, stream, "codex", "login"); err != nil {
 		return nil, err
 	}
 
@@ -266,6 +304,36 @@ func captureAuthViaLogin(ctx context.Context, stderr io.Writer, authPath string)
 		return nil, err
 	}
 	return raw, nil
+}
+
+type loginURLHintWriter struct {
+	dst     io.Writer
+	buffer  string
+	printed bool
+}
+
+func newLoginURLHintWriter(dst io.Writer) *loginURLHintWriter {
+	return &loginURLHintWriter{dst: dst}
+}
+
+func (w *loginURLHintWriter) Write(p []byte) (int, error) {
+	if w.printed {
+		return len(p), nil
+	}
+
+	w.buffer += string(p)
+	if match := loginURLPattern.FindString(w.buffer); match != "" {
+		w.printed = true
+		_, err := fmt.Fprintf(w.dst, "If the browser did not open automatically, open this link manually: %s\n", strings.TrimRight(match, ".,);]"))
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	if len(w.buffer) > 4096 {
+		w.buffer = w.buffer[len(w.buffer)-4096:]
+	}
+	return len(p), nil
 }
 
 func emailFromHeaders(headers http.Header) string {
