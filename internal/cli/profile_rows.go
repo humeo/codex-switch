@@ -46,6 +46,7 @@ func loadProfileRows(ctx context.Context, deps Dependencies, cfg *config.Config,
 					return nil, err
 				}
 			} else {
+				liveSnapshot = mergeRateLimitedMetadata(liveSnapshot, row.snapshot)
 				row.snapshot = liveSnapshot
 				row.source = quotaSourceLive
 				if cfg.Cache == nil {

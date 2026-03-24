@@ -137,9 +137,12 @@ func TestCheckTreats429AsFullyUsed(t *testing.T) {
 	client := Client{
 		HTTP: &http.Client{
 			Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+				headers := http.Header{}
+				headers.Set("x-codex-plan-type", "team")
+				headers.Set("x-codex-primary-reset-after-seconds", "60")
 				return &http.Response{
 					StatusCode: http.StatusTooManyRequests,
-					Header:     http.Header{},
+					Header:     headers,
 					Body:       io.NopCloser(strings.NewReader("too many requests")),
 				}, nil
 			}),
@@ -152,6 +155,15 @@ func TestCheckTreats429AsFullyUsed(t *testing.T) {
 	}
 	if got.PrimaryUsedPercent != 100 || got.SecondaryUsedPercent != 100 {
 		t.Fatalf("snapshot = %+v, want both used to 100", got)
+	}
+	if got.Plan != "team" {
+		t.Fatalf("Plan = %q, want team", got.Plan)
+	}
+	if got.PrimaryResetAfter != time.Minute {
+		t.Fatalf("PrimaryResetAfter = %s, want %s", got.PrimaryResetAfter, time.Minute)
+	}
+	if !got.RateLimited {
+		t.Fatalf("RateLimited = false, want true")
 	}
 }
 

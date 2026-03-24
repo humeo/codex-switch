@@ -30,6 +30,7 @@ type Snapshot struct {
 	SecondaryResetAt     time.Time
 	HasCredits           bool
 	CreditsBalance       string
+	RateLimited          bool
 }
 
 type Client struct {
@@ -210,7 +211,14 @@ func snapshotFromResponse(resp *http.Response) (Snapshot, bool, error) {
 		snapshot, err := ParseHeaders(resp.Header)
 		return snapshot, false, err
 	case http.StatusTooManyRequests:
-		return Snapshot{PrimaryUsedPercent: 100, SecondaryUsedPercent: 100}, false, nil
+		snapshot, err := ParseHeaders(resp.Header)
+		if err != nil {
+			return Snapshot{}, false, err
+		}
+		snapshot.PrimaryUsedPercent = 100
+		snapshot.SecondaryUsedPercent = 100
+		snapshot.RateLimited = true
+		return snapshot, false, nil
 	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
 		return Snapshot{}, true, fmt.Errorf("retryable response status %d", resp.StatusCode)
 	case http.StatusForbidden:

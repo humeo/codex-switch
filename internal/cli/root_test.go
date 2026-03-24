@@ -314,6 +314,73 @@ func TestListCommandNoCheckUsesCachedSnapshot(t *testing.T) {
 	}
 }
 
+func TestListCommandPreservesCachedMetadataOnRateLimit(t *testing.T) {
+	dir := t.TempDir()
+	profilesDir := filepath.Join(dir, "profiles")
+	cfgPath := filepath.Join(dir, "config.toml")
+
+	store := profile.NewStore(profilesDir)
+	writeProfile(t, store, "limited", []byte(`{"tokens":{"access_token":"limited-token","account_id":"acct-limited"}}`))
+	cfg := config.Default()
+	cfg.Cache["limited"] = config.QuotaCache{
+		Plan:                       "plus",
+		PrimaryUsedPercent:         8,
+		SecondaryUsedPercent:       13,
+		PrimaryResetAfterSeconds:   int64((4*time.Hour + 45*time.Minute).Seconds()),
+		SecondaryResetAfterSeconds: int64((6*24*time.Hour + 12*time.Hour).Seconds()),
+		PrimaryResetAt:             time.Date(2026, 3, 24, 11, 15, 0, 0, time.UTC),
+		SecondaryResetAt:           time.Date(2026, 3, 30, 18, 0, 0, 0, time.UTC),
+	}
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	useQuotaChecker(t, func(_ context.Context, _ quota.Tokens, _ string) (quota.Snapshot, error) {
+		return quota.Snapshot{
+			PrimaryUsedPercent:   100,
+			SecondaryUsedPercent: 100,
+			RateLimited:          true,
+		}, nil
+	})
+
+	stdout := &bytes.Buffer{}
+	cmd := NewRootCommand(Dependencies{
+		ConfigPath:  cfgPath,
+		ProfilesDir: profilesDir,
+		Stdout:      stdout,
+	})
+	cmd.SetArgs([]string{"list"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	got := stdout.String()
+	for _, want := range []string{"limited", "plus", "100%", "0%", "4h 45m", "6d 12h", "live"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("stdout = %q, want %q", got, want)
+		}
+	}
+	if strings.Contains(got, "unknown") {
+		t.Fatalf("stdout = %q, want cached plan metadata preserved", got)
+	}
+
+	gotCfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	cached := gotCfg.Cache["limited"]
+	if cached.Plan != "plus" {
+		t.Fatalf("cache plan = %q, want plus", cached.Plan)
+	}
+	if cached.PrimaryResetAfterSeconds != int64((4*time.Hour + 45*time.Minute).Seconds()) {
+		t.Fatalf("cache primary reset after = %d", cached.PrimaryResetAfterSeconds)
+	}
+	if cached.SecondaryResetAfterSeconds != int64((6*24*time.Hour + 12*time.Hour).Seconds()) {
+		t.Fatalf("cache secondary reset after = %d", cached.SecondaryResetAfterSeconds)
+	}
+}
+
 func TestStatusCommandShowsActiveProfileDetails(t *testing.T) {
 	dir := t.TempDir()
 	profilesDir := filepath.Join(dir, "profiles")
@@ -452,6 +519,71 @@ func TestStatusCommandShowsActiveProfileDetails(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("stdout = %q, want %q", got, want)
 		}
+	}
+}
+
+func TestStatusCommandPreservesCachedMetadataOnRateLimit(t *testing.T) {
+	dir := t.TempDir()
+	profilesDir := filepath.Join(dir, "profiles")
+	cfgPath := filepath.Join(dir, "config.toml")
+
+	store := profile.NewStore(profilesDir)
+	writeProfile(t, store, "limited", []byte(`{"tokens":{"access_token":"limited-token","account_id":"acct-limited"}}`))
+	cfg := config.Default()
+	cfg.ActiveProfile = "limited"
+	cfg.Cache["limited"] = config.QuotaCache{
+		Plan:                       "team",
+		PrimaryUsedPercent:         21,
+		SecondaryUsedPercent:       88,
+		PrimaryResetAfterSeconds:   int64((4*time.Hour + 54*time.Minute).Seconds()),
+		SecondaryResetAfterSeconds: int64((6*24*time.Hour + 12*time.Hour).Seconds()),
+		PrimaryResetAt:             time.Date(2026, 3, 24, 19, 10, 20, 0, time.FixedZone("CST", 8*3600)),
+		SecondaryResetAt:           time.Date(2026, 3, 30, 9, 59, 31, 0, time.FixedZone("CST", 8*3600)),
+	}
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	useQuotaChecker(t, func(_ context.Context, _ quota.Tokens, _ string) (quota.Snapshot, error) {
+		return quota.Snapshot{
+			PrimaryUsedPercent:   100,
+			SecondaryUsedPercent: 100,
+			RateLimited:          true,
+		}, nil
+	})
+
+	stdout := &bytes.Buffer{}
+	cmd := NewRootCommand(Dependencies{
+		ConfigPath:  cfgPath,
+		ProfilesDir: profilesDir,
+		Stdout:      stdout,
+	})
+	cmd.SetArgs([]string{"status"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	got := stdout.String()
+	for _, want := range []string{
+		"PLAN",
+		"team",
+		"5H used",
+		"100%",
+		"5H left",
+		"0%",
+		"5H reset",
+		"4h 54m (at 2026-03-24 11:10)",
+		"Weekly reset",
+		"6d 12h (at 2026-03-30 01:59)",
+		"SRC LIVE",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("stdout = %q, want %q", got, want)
+		}
+	}
+	if strings.Contains(got, "unknown") {
+		t.Fatalf("stdout = %q, want cached plan metadata preserved", got)
 	}
 }
 

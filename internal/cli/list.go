@@ -87,6 +87,8 @@ func newListCommand(deps Dependencies) *cobra.Command {
 }
 
 func resolveSnapshot(ctx context.Context, deps Dependencies, cfg *config.Config, store profile.Store, name string, checkLive bool, checker quotaChecker) (quota.Snapshot, error) {
+	cachedSnapshot := snapshotFromCache(cfg.Cache[name])
+
 	if checkLive {
 		if checker == nil {
 			checker = quotaCheckerFactory()
@@ -106,6 +108,7 @@ func resolveSnapshot(ctx context.Context, deps Dependencies, cfg *config.Config,
 		if err != nil {
 			return quota.Snapshot{}, err
 		}
+		snapshot = mergeRateLimitedMetadata(snapshot, cachedSnapshot)
 
 		if cfg.Cache == nil {
 			cfg.Cache = map[string]config.QuotaCache{}
@@ -118,7 +121,7 @@ func resolveSnapshot(ctx context.Context, deps Dependencies, cfg *config.Config,
 		return snapshot, nil
 	}
 
-	return snapshotFromCache(cfg.Cache[name]), nil
+	return cachedSnapshot, nil
 }
 
 func tokensFromProfile(raw []byte) (quota.Tokens, error) {
@@ -159,6 +162,28 @@ func snapshotFromCache(cache config.QuotaCache) quota.Snapshot {
 		HasCredits:           cache.HasCredits,
 		CreditsBalance:       cache.CreditsBalance,
 	}
+}
+
+func mergeRateLimitedMetadata(snapshot quota.Snapshot, cached quota.Snapshot) quota.Snapshot {
+	if !snapshot.RateLimited {
+		return snapshot
+	}
+	if snapshot.Plan == "" {
+		snapshot.Plan = cached.Plan
+	}
+	if snapshot.PrimaryResetAfter <= 0 {
+		snapshot.PrimaryResetAfter = cached.PrimaryResetAfter
+	}
+	if snapshot.SecondaryResetAfter <= 0 {
+		snapshot.SecondaryResetAfter = cached.SecondaryResetAfter
+	}
+	if snapshot.PrimaryResetAt.IsZero() {
+		snapshot.PrimaryResetAt = cached.PrimaryResetAt
+	}
+	if snapshot.SecondaryResetAt.IsZero() {
+		snapshot.SecondaryResetAt = cached.SecondaryResetAt
+	}
+	return snapshot
 }
 
 func renderList(out io.Writer, rows []listRow) {
