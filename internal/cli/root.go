@@ -22,6 +22,7 @@ func NewRootCommand(deps Dependencies) *cobra.Command {
 		newWatchCommand(deps),
 		newRemoveCommand(deps),
 		newUpdateCommand(deps),
+		newVersionCommand(deps),
 	)
 	cmd.InitDefaultCompletionCmd()
 

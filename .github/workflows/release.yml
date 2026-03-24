@@ -43,7 +43,7 @@ jobs:
           mkdir -p dist
           binary_dir="dist/codex-switch_${GOOS}_${GOARCH}"
           mkdir -p "${binary_dir}"
-          go build -o "${binary_dir}/codex-switch" ./cmd/codex-switch
+          go build -ldflags="-X codex-switch/internal/cli.Version=${GITHUB_REF_NAME}" -o "${binary_dir}/codex-switch" ./cmd/codex-switch
           tar -C "${binary_dir}" -czf "dist/codex-switch_${GOOS}_${GOARCH}.tar.gz" codex-switch
           rm -rf "${binary_dir}"
 

@@ -96,7 +96,7 @@ func TestRootCommandIncludesCoreSubcommands(t *testing.T) {
 		names[child.Name()] = true
 	}
 
-	for _, want := range []string{"auth", "list", "use", "status", "watch", "remove", "update"} {
+	for _, want := range []string{"auth", "list", "use", "status", "watch", "remove", "update", "version"} {
 		if !names[want] {
 			t.Fatalf("missing subcommand %q", want)
 		}

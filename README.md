@@ -179,6 +179,7 @@ status [--no-check]  Show active profile, quota, and watch summary
 remove <name>        Remove a saved profile
 watch                Watch quota usage and switch automatically
 update               Update codex-switch to the latest release
+version              Print the installed codex-switch version
 ```
 
 ## Getting Started
@@ -232,6 +233,7 @@ notify = true
 - Plain `auth` saves the account already present in `~/.codex/auth.json`; if no current session exists, it tells you to use `auth --login`.
 - `use` without a profile name opens an inline Bubble Tea selector with arrow keys or `j`/`k`; `use <name>` keeps the non-interactive path for scripts.
 - `update` downloads the latest GitHub release asset for the current `darwin/linux` and `amd64/arm64` platform, replaces the current executable in place, and refreshes shell completions.
+- `version` prints the current `codex-switch` version. Source builds default to `dev`; release builds show the tagged version.
 - `list`, the `use` selector, and the `status` summary bar all show `SRC`. `SRC LIVE` means the quota data came from a fresh network check; `SRC CACHE` means it came from the local cache in `~/.codex-switch/config.toml`.
 - `list --no-check` and `status --no-check` read cached quota data from `~/.codex-switch/config.toml`.
 - `status` renders a compact terminal dashboard with a summary bar plus `Quota`, `Watch`, `Recent Switch`, and `Profiles` cards.
