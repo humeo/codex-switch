@@ -37,6 +37,12 @@ var quotaCheckerFactory = func() quotaChecker {
 	return liveQuotaChecker{}
 }
 
+const quotaFreshWindow = time.Minute
+
+var timeNow = func() time.Time {
+	return time.Now().UTC()
+}
+
 type listRow struct {
 	name     string
 	snapshot quota.Snapshot
@@ -113,7 +119,7 @@ func resolveSnapshot(ctx context.Context, deps Dependencies, cfg *config.Config,
 		if cfg.Cache == nil {
 			cfg.Cache = map[string]config.QuotaCache{}
 		}
-		cfg.Cache[name] = cacheFromSnapshot(snapshot)
+		cfg.Cache[name] = cacheFromSnapshot(snapshot, timeNow())
 		if err := config.Save(deps.ConfigPath, *cfg); err != nil {
 			return quota.Snapshot{}, err
 		}
@@ -136,7 +142,7 @@ func tokensFromProfile(raw []byte) (quota.Tokens, error) {
 	}, nil
 }
 
-func cacheFromSnapshot(snapshot quota.Snapshot) config.QuotaCache {
+func cacheFromSnapshot(snapshot quota.Snapshot, checkedAt time.Time) config.QuotaCache {
 	return config.QuotaCache{
 		Plan:                       snapshot.Plan,
 		PrimaryUsedPercent:         snapshot.PrimaryUsedPercent,
@@ -147,6 +153,7 @@ func cacheFromSnapshot(snapshot quota.Snapshot) config.QuotaCache {
 		SecondaryResetAt:           snapshot.SecondaryResetAt,
 		HasCredits:                 snapshot.HasCredits,
 		CreditsBalance:             snapshot.CreditsBalance,
+		CheckedAt:                  checkedAt.UTC(),
 	}
 }
 
@@ -184,6 +191,14 @@ func mergeRateLimitedMetadata(snapshot quota.Snapshot, cached quota.Snapshot) qu
 		snapshot.SecondaryResetAt = cached.SecondaryResetAt
 	}
 	return snapshot
+}
+
+func cacheIsFresh(cache config.QuotaCache, now time.Time) bool {
+	if cache.CheckedAt.IsZero() {
+		return false
+	}
+	age := now.Sub(cache.CheckedAt)
+	return age >= 0 && age < quotaFreshWindow
 }
 
 func renderList(out io.Writer, rows []listRow) {

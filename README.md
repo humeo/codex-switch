@@ -127,46 +127,15 @@ active profile: personal
 
 $ codex-switch status
 Status
-╭───────────────╮ ╭───────────╮ ╭──────────╮ ╭──────────────────╮
-│ ACTIVE work   │ │ PLAN plus │ │ SRC LIVE │ │ PROFILES 2 total │
-╰───────────────╯ ╰───────────╯ ╰──────────╯ ╰──────────────────╯
+ACTIVE work   PLAN plus   SRC LIVE   PROFILES 2 total   AUTO on   MODEL gpt-5.4-mini
 
-╭────────────────────────────────────────────╮
-│ Quota                                      │
-│                                            │
-│ 5H used       8%                           │
-│ 5H left       92%                          │
-│ 5H reset      4h 50m (at 2026-03-23 14:31) │
-│ Weekly used   12%                          │
-│ Weekly left   88%                          │
-│ Weekly reset  5d 2h (at 2026-03-28 18:42)  │
-│ Credits       none                         │
-╰────────────────────────────────────────────╯
+NAME      PLAN   5H USED   5H LEFT   WEEKLY USED   WEEKLY LEFT   5H RESET   WEEKLY RESET   SRC    ACTIVE
+personal  plus   8%        92%       12%           88%           4h 50m     5d 2h         live
+work      plus   22%       78%       61%           39%           1h 10m     2d 6h         live   *
 
-╭──────────────────────────────────╮
-│ Watch                            │
-│                                  │
-│ Mode        manual foreground    │
-│ Notify      yes                  │
-│ Thresholds  5H 90% / weekly 95%  │
-│ History     No watch history yet │
-╰──────────────────────────────────╯
+Watch: mode manual foreground | notify yes | thresholds 5H 90% / weekly 95% | history none
 
-╭─────────────────────────────╮
-│ Recent Switch               │
-│                             │
-│ No auto-switch recorded yet │
-╰─────────────────────────────╯
-
-╭───────────────────────────╮
-│ Profiles                  │
-│                           │
-│ Current      work         │
-│ Previous     -            │
-│ Saved        2 total      │
-│ Auto check   on           │
-│ Check model  gpt-5.4-mini │
-╰───────────────────────────╯
+Recent Switch: No auto-switch recorded yet
 ```
 
 ## Commands
@@ -207,7 +176,7 @@ secondary_threshold_percent = 95
 notify = true
 ```
 
-`auto_check = true` is the default, so `list` and `status` try to fetch fresh quota data unless you disable it in config. `--no-check` forces cache-only output for that invocation.
+`auto_check = true` is the default, so `list`, `use` without a profile name, and `status` try to fetch fresh quota data unless you disable it in config. To avoid back-to-back quota probes, snapshots checked within the last minute are reused from cache. `--no-check` forces cache-only output for that invocation.
 `watch` no longer uses fixed interval polling. Existing `interval_minutes` values in older configs can be left in place, but they are ignored by the event-driven watcher.
 
 ## How It Works
@@ -234,9 +203,10 @@ notify = true
 - `use` without a profile name opens an inline Bubble Tea selector with arrow keys or `j`/`k`; `use <name>` keeps the non-interactive path for scripts.
 - `update` downloads the latest GitHub release asset for the current `darwin/linux` and `amd64/arm64` platform, replaces the current executable in place, and refreshes shell completions.
 - `version` prints the current `codex-switch` version. Source builds default to `dev`; release builds show the tagged version.
-- `list`, the `use` selector, and the `status` summary bar all show `SRC`. `SRC LIVE` means the quota data came from a fresh network check; `SRC CACHE` means it came from the local cache in `~/.codex-switch/config.toml`.
+- `list`, the `use` selector, and `status` all show `SRC`. `SRC LIVE` means the quota data came from a fresh network check; `SRC CACHE` means it came from the local cache in `~/.codex-switch/config.toml`.
+- If a profile was checked less than 1 minute ago, `list`, `use`, and `status` reuse that cached snapshot instead of making another network request.
 - `list --no-check` and `status --no-check` read cached quota data from `~/.codex-switch/config.toml`.
-- `status` renders a compact terminal dashboard with a summary bar plus `Quota`, `Watch`, `Recent Switch`, and `Profiles` cards.
+- `status` renders a compact summary line, the full per-profile quota table, and one-line `Watch` / `Recent Switch` sections.
 - `remove <name>` refuses to delete the active profile unless you pass `--force`.
 - `watch` is event-driven: it does one startup calibration, then reacts to local Codex session events instead of fixed-interval quota polling.
 

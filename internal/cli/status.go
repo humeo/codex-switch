@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,7 +16,6 @@ import (
 	"codex-switch/internal/profile"
 	"codex-switch/internal/quota"
 	"codex-switch/internal/watcher"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 )
 
@@ -23,12 +23,12 @@ type statusSummary struct {
 	activeName     string
 	activeSnapshot quota.Snapshot
 	activeSource   quotaSource
+	rows           []listRow
 	totalProfiles  int
 	autoCheck      bool
 	checkModel     string
 	watch          statusWatchSummary
 	recentSwitch   statusSwitchSummary
-	previousName   string
 }
 
 type statusWatchSummary struct {
@@ -94,14 +94,14 @@ func loadStatusSummary(ctx context.Context, deps Dependencies, cfg *config.Confi
 	}
 
 	checkLive := cfg.AutoCheck && allowLive
-	var checker quotaChecker
-	if checkLive {
-		checker = quotaCheckerFactory()
-	}
-
-	snapshot, err := resolveSnapshot(ctx, deps, cfg, store, cfg.ActiveProfile, checkLive, checker)
+	rows, err := loadProfileRows(ctx, deps, cfg, store, names, checkLive, true)
 	if err != nil {
 		return statusSummary{}, err
+	}
+
+	activeRow, ok := findActiveRow(rows, cfg.ActiveProfile)
+	if !ok {
+		return statusSummary{}, fmt.Errorf("active profile %q not found", cfg.ActiveProfile)
 	}
 
 	watchState, err := loadWatchStateSummary(deps.WatchStatePath)
@@ -111,11 +111,6 @@ func loadStatusSummary(ctx context.Context, deps Dependencies, cfg *config.Confi
 	recentSwitch, err := loadRecentSwitchSummary(deps.WatchChecksPath)
 	if err != nil {
 		return statusSummary{}, err
-	}
-
-	previousName := ""
-	if recentSwitch.found && recentSwitch.to == cfg.ActiveProfile {
-		previousName = recentSwitch.from
 	}
 
 	watchProfileState := watchState.Profiles[cfg.ActiveProfile]
@@ -132,21 +127,16 @@ func loadStatusSummary(ctx context.Context, deps Dependencies, cfg *config.Confi
 		lastActivityAt:     latestWatchActivityAt(watchState),
 	}
 
-	source := quotaSourceCache
-	if checkLive {
-		source = quotaSourceLive
-	}
-
 	return statusSummary{
 		activeName:     cfg.ActiveProfile,
-		activeSnapshot: snapshot,
-		activeSource:   source,
-		totalProfiles:  len(names),
+		activeSnapshot: activeRow.snapshot,
+		activeSource:   activeRow.source,
+		rows:           rows,
+		totalProfiles:  len(rows),
 		autoCheck:      cfg.AutoCheck,
 		checkModel:     cfg.CheckModel,
 		watch:          watchSummary,
 		recentSwitch:   recentSwitch,
-		previousName:   previousName,
 	}, nil
 }
 
@@ -234,156 +224,65 @@ func latestWatchActivityAt(state watcher.WatchState) time.Time {
 func renderStatus(out io.Writer, summary statusSummary) {
 	sections := []string{
 		renderStatusHeader(summary),
-		renderStatusCard("Quota", renderStatusRows([]statusField{
-			{label: "5H used", value: fmt.Sprintf("%d%%", summary.activeSnapshot.PrimaryUsedPercent)},
-			{label: "5H left", value: fmt.Sprintf("%d%%", remainingPercent(summary.activeSnapshot.PrimaryUsedPercent))},
-			{label: "5H reset", value: formatResetSummary(summary.activeSnapshot.PrimaryResetAfter, summary.activeSnapshot.PrimaryResetAt)},
-			{label: "Weekly used", value: fmt.Sprintf("%d%%", summary.activeSnapshot.SecondaryUsedPercent)},
-			{label: "Weekly left", value: fmt.Sprintf("%d%%", remainingPercent(summary.activeSnapshot.SecondaryUsedPercent))},
-			{label: "Weekly reset", value: formatResetSummary(summary.activeSnapshot.SecondaryResetAfter, summary.activeSnapshot.SecondaryResetAt)},
-			{label: "Credits", value: creditsSummary(summary.activeSnapshot)},
-		})),
-		renderStatusCard("Watch", renderWatchStatus(summary.watch)),
-		renderStatusCard("Recent Switch", renderRecentSwitchStatus(summary.recentSwitch)),
-		renderStatusCard("Profiles", renderStatusRows([]statusField{
-			{label: "Current", value: summary.activeName},
-			{label: "Previous", value: formatValueOrDash(summary.previousName)},
-			{label: "Saved", value: fmt.Sprintf("%d total", summary.totalProfiles)},
-			{label: "Auto check", value: formatOnOff(summary.autoCheck)},
-			{label: "Check model", value: summary.checkModel},
-		})),
+		renderStatusTable(summary.rows),
+		"Watch: " + renderWatchStatus(summary.watch),
+		"Recent Switch: " + renderRecentSwitchStatus(summary.recentSwitch),
 	}
 
 	fmt.Fprint(out, strings.Join(sections, "\n\n"))
 }
 
-type statusField struct {
-	label string
-	value string
-}
-
-var (
-	statusTitleStyle  = lipgloss.NewStyle().Bold(true)
-	statusMutedColor  = lipgloss.AdaptiveColor{Light: "#57606A", Dark: "#9AA4BF"}
-	statusBorderColor = lipgloss.AdaptiveColor{Light: "#D0D7DE", Dark: "#434C63"}
-	statusAccentColor = lipgloss.AdaptiveColor{Light: "#0969DA", Dark: "#8FB3FF"}
-	statusPillStyle   = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(statusBorderColor).
-				Padding(0, 1).
-				MarginRight(1)
-	statusPillLabelStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(statusAccentColor)
-	statusPillValueStyle = lipgloss.NewStyle()
-	statusCardStyle      = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(statusBorderColor).
-				Padding(0, 1)
-	statusCardTitleStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(statusAccentColor)
-	statusFieldLabelStyle = lipgloss.NewStyle().
-				Foreground(statusMutedColor)
-	statusEmptyStateStyle = lipgloss.NewStyle().
-				Foreground(statusMutedColor).
-				Italic(true)
-)
-
 func renderStatusHeader(summary statusSummary) string {
-	pills := []string{
-		renderStatusPill("ACTIVE", summary.activeName),
-		renderStatusPill("PLAN", displayPlan(summary.activeSnapshot.Plan)),
-		renderStatusPill("SRC", strings.ToUpper(string(summary.activeSource))),
-		renderStatusPill("PROFILES", fmt.Sprintf("%d total", summary.totalProfiles)),
+	parts := []string{
+		"ACTIVE " + summary.activeName,
+		"PLAN " + displayPlan(summary.activeSnapshot.Plan),
+		"SRC " + strings.ToUpper(string(summary.activeSource)),
+		"PROFILES " + fmt.Sprintf("%d total", summary.totalProfiles),
+		"AUTO " + formatOnOff(summary.autoCheck),
+		"MODEL " + summary.checkModel,
 	}
-
-	return statusTitleStyle.Render("Status") + "\n" + lipgloss.JoinHorizontal(lipgloss.Top, pills...)
+	return "Status\n" + strings.Join(parts, "   ")
 }
 
-func renderStatusPill(label, value string) string {
-	content := statusPillLabelStyle.Render(label) + " " + statusPillValueStyle.Render(value)
-	return statusPillStyle.Render(content)
-}
-
-func renderStatusCard(title, body string) string {
-	return statusCardStyle.Render(statusCardTitleStyle.Render(title) + "\n\n" + body)
-}
-
-func renderStatusRows(rows []statusField) string {
-	maxWidth := 0
-	for _, row := range rows {
-		if len(row.label) > maxWidth {
-			maxWidth = len(row.label)
-		}
-	}
-
-	lines := make([]string, 0, len(rows))
-	for _, row := range rows {
-		lines = append(lines, statusFieldLabelStyle.Width(maxWidth).Render(row.label)+"  "+row.value)
-	}
-	return strings.Join(lines, "\n")
+func renderStatusTable(rows []listRow) string {
+	var buf bytes.Buffer
+	renderList(&buf, rows)
+	return strings.TrimRight(buf.String(), "\n")
 }
 
 func renderWatchStatus(summary statusWatchSummary) string {
-	rows := []statusField{
-		{label: "Mode", value: summary.mode},
-		{label: "Notify", value: formatYesNo(summary.notify)},
-		{label: "Thresholds", value: fmt.Sprintf("5H %d%% / weekly %d%%", summary.primaryThreshold, summary.secondaryThreshold)},
+	parts := []string{
+		"mode " + summary.mode,
+		"notify " + formatYesNo(summary.notify),
+		fmt.Sprintf("thresholds 5H %d%% / weekly %d%%", summary.primaryThreshold, summary.secondaryThreshold),
 	}
 
 	if !summary.historyAvailable {
-		rows = append(rows, statusField{label: "History", value: statusEmptyStateStyle.Render("No watch history yet")})
-		return renderStatusRows(rows)
+		parts = append(parts, "history none")
+		return strings.Join(parts, " | ")
 	}
 
-	rows = append(rows,
-		statusField{label: "Runtime active", value: formatValueOrDash(summary.runtimeActive)},
-		statusField{label: "Cooldown", value: formatTimestampOrNone(summary.cooldownUntil)},
-		statusField{label: "Last confirmed", value: formatTimestampOrNone(summary.lastConfirmedAt)},
-		statusField{label: "Last trigger", value: formatValueOrDash(summary.lastTrigger)},
-		statusField{label: "Last activity", value: formatTimestampOrNone(summary.lastActivityAt)},
+	parts = append(parts,
+		"runtime active "+formatValueOrDash(summary.runtimeActive),
+		"cooldown "+formatTimestampOrNone(summary.cooldownUntil),
+		"last confirmed "+formatTimestampOrNone(summary.lastConfirmedAt),
+		"last trigger "+formatValueOrDash(summary.lastTrigger),
+		"last activity "+formatTimestampOrNone(summary.lastActivityAt),
 	)
-	return renderStatusRows(rows)
+	return strings.Join(parts, " | ")
 }
 
 func renderRecentSwitchStatus(summary statusSwitchSummary) string {
 	if !summary.found {
-		return statusEmptyStateStyle.Render("No auto-switch recorded yet")
+		return "No auto-switch recorded yet"
 	}
 
-	return renderStatusRows([]statusField{
-		{label: "Last auto switch", value: formatTimestamp(summary.at)},
-		{label: "From", value: summary.from},
-		{label: "To", value: summary.to},
-		{label: "Trigger", value: formatValueOrDash(summary.trigger)},
-	})
-}
-
-func formatResetSummary(after time.Duration, at time.Time) string {
-	relative := after
-	if relative <= 0 && !at.IsZero() {
-		relative = time.Until(at)
-	}
-	if relative < 0 {
-		relative = 0
-	}
-
-	if at.IsZero() {
-		return formatResetCompact(relative)
-	}
-
-	return fmt.Sprintf("%s (at %s)", formatResetCompact(relative), at.UTC().Format("2006-01-02 15:04"))
-}
-
-func creditsSummary(snapshot quota.Snapshot) string {
-	if !snapshot.HasCredits {
-		return "none"
-	}
-	if snapshot.CreditsBalance != "" {
-		return snapshot.CreditsBalance
-	}
-	return "available"
+	return strings.Join([]string{
+		formatTimestamp(summary.at),
+		"from " + summary.from,
+		"to " + summary.to,
+		"trigger " + formatValueOrDash(summary.trigger),
+	}, " | ")
 }
 
 func formatOnOff(enabled bool) string {
@@ -416,4 +315,13 @@ func formatValueOrDash(value string) string {
 		return "-"
 	}
 	return value
+}
+
+func findActiveRow(rows []listRow, activeName string) (listRow, bool) {
+	for _, row := range rows {
+		if row.name == activeName {
+			return row, true
+		}
+	}
+	return listRow{}, false
 }

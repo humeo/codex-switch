@@ -334,6 +334,73 @@ func TestListCommandNoCheckUsesCachedSnapshot(t *testing.T) {
 	}
 }
 
+func TestListCommandReusesFreshCacheWithinOneMinute(t *testing.T) {
+	dir := t.TempDir()
+	profilesDir := filepath.Join(dir, "profiles")
+	cfgPath := filepath.Join(dir, "config.toml")
+
+	store := profile.NewStore(profilesDir)
+	writeProfile(t, store, "cached", []byte(`{"tokens":{"access_token":"cached-token","account_id":"acct-cached"}}`))
+	if err := config.Save(cfgPath, config.Default()); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	now := time.Date(2026, 3, 24, 9, 0, 0, 0, time.UTC)
+	useTimeNow(t, func() time.Time { return now })
+
+	calls := 0
+	useQuotaChecker(t, func(_ context.Context, _ quota.Tokens, _ string) (quota.Snapshot, error) {
+		calls++
+		return quota.Snapshot{
+			Plan:                 "plus",
+			PrimaryUsedPercent:   7,
+			SecondaryUsedPercent: 14,
+			PrimaryResetAfter:    3 * time.Hour,
+			SecondaryResetAfter:  6 * time.Hour,
+		}, nil
+	})
+
+	first := &bytes.Buffer{}
+	firstCmd := NewRootCommand(Dependencies{
+		ConfigPath:  cfgPath,
+		ProfilesDir: profilesDir,
+		Stdout:      first,
+	})
+	firstCmd.SetArgs([]string{"list"})
+
+	if err := firstCmd.Execute(); err != nil {
+		t.Fatalf("first Execute() error = %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("quota calls after first list = %d, want 1", calls)
+	}
+	if !strings.Contains(first.String(), "live") {
+		t.Fatalf("first stdout = %q, want live source", first.String())
+	}
+
+	now = now.Add(30 * time.Second)
+
+	second := &bytes.Buffer{}
+	secondCmd := NewRootCommand(Dependencies{
+		ConfigPath:  cfgPath,
+		ProfilesDir: profilesDir,
+		Stdout:      second,
+	})
+	secondCmd.SetArgs([]string{"list"})
+
+	if err := secondCmd.Execute(); err != nil {
+		t.Fatalf("second Execute() error = %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("quota calls after second list = %d, want fresh cache reuse", calls)
+	}
+	for _, want := range []string{"cached", "plus", "7%", "93%", "14%", "86%", "cache"} {
+		if !strings.Contains(second.String(), want) {
+			t.Fatalf("second stdout = %q, want %q", second.String(), want)
+		}
+	}
+}
+
 func TestListCommandPreservesCachedMetadataOnRateLimit(t *testing.T) {
 	dir := t.TempDir()
 	profilesDir := filepath.Join(dir, "profiles")
@@ -401,7 +468,7 @@ func TestListCommandPreservesCachedMetadataOnRateLimit(t *testing.T) {
 	}
 }
 
-func TestStatusCommandShowsActiveProfileDetails(t *testing.T) {
+func TestStatusCommandShowsCompactAllProfileSummary(t *testing.T) {
 	dir := t.TempDir()
 	profilesDir := filepath.Join(dir, "profiles")
 	cfgPath := filepath.Join(dir, "config.toml")
@@ -421,6 +488,15 @@ func TestStatusCommandShowsActiveProfileDetails(t *testing.T) {
 		SecondaryResetAfterSeconds: int64((2*24*time.Hour + 9*time.Hour).Seconds()),
 		PrimaryResetAt:             time.Date(2026, 3, 23, 14, 31, 0, 0, time.UTC),
 		SecondaryResetAt:           time.Date(2026, 3, 25, 18, 42, 0, 0, time.UTC),
+	}
+	cfg.Cache["personal"] = config.QuotaCache{
+		Plan:                       "team",
+		PrimaryUsedPercent:         18,
+		SecondaryUsedPercent:       63,
+		PrimaryResetAfterSeconds:   int64((1*time.Hour + 40*time.Minute).Seconds()),
+		SecondaryResetAfterSeconds: int64((4*24*time.Hour + 2*time.Hour).Seconds()),
+		PrimaryResetAt:             time.Date(2026, 3, 23, 11, 51, 0, 0, time.UTC),
+		SecondaryResetAt:           time.Date(2026, 3, 27, 11, 32, 0, 0, time.UTC),
 	}
 	if err := config.Save(cfgPath, cfg); err != nil {
 		t.Fatalf("Save() error = %v", err)
@@ -484,60 +560,49 @@ func TestStatusCommandShowsActiveProfileDetails(t *testing.T) {
 	for _, want := range []string{
 		"Status",
 		"ACTIVE",
-		"PLAN",
-		"SRC",
-		"PROFILES",
 		"work",
-		"CACHE",
+		"PLAN",
+		"plus",
+		"PROFILES",
 		"2 total",
-		"Quota",
-		"5H used",
-		"2%",
-		"5H left",
-		"98%",
-		"5H reset",
-		"4h 20m (at 2026-03-23 14:31)",
-		"Weekly used",
-		"86%",
-		"Weekly left",
-		"14%",
-		"Weekly reset",
-		"2d 9h (at 2026-03-25 18:42)",
-		"Credits",
-		"none",
-		"Watch",
-		"Mode",
-		"manual foreground",
-		"Notify",
-		"yes",
-		"Thresholds",
-		"5H 90% / weekly 95%",
-		"Runtime active",
-		"Cooldown",
-		"2026-03-23 09:38",
-		"Last confirmed",
-		"2026-03-23 09:30",
-		"Last trigger",
-		"session_rate_limits",
-		"Recent Switch",
-		"Last auto switch",
-		"2026-03-23 09:10",
-		"From",
-		"personal",
-		"To",
-		"Trigger",
-		"primary_threshold",
-		"Profiles",
-		"Current",
-		"Previous",
-		"Saved",
-		"Auto check",
+		"MODEL",
 		"gpt-5.4-mini",
-		"╭",
-		"╰",
+		"NAME",
+		"5H USED",
+		"WEEKLY USED",
+		"SRC",
+		"ACTIVE",
+		"personal",
+		"team",
+		"18%",
+		"63%",
+		"work",
+		"plus",
+		"2%",
+		"86%",
+		"cache",
+		"Watch:",
+		"mode manual foreground",
+		"notify yes",
+		"thresholds 5H 90% / weekly 95%",
+		"runtime active work",
+		"cooldown 2026-03-23 09:38",
+		"last confirmed 2026-03-23 09:30",
+		"last trigger session_rate_limits",
+		"last activity 2026-03-23 09:38",
+		"Recent Switch:",
+		"2026-03-23 09:10",
+		"from personal",
+		"to work",
+		"trigger primary_threshold",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("stdout = %q, want %q", got, want)
+		}
+	}
+	for _, unwanted := range []string{"Quota", "Profiles", "╭", "╰"} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("stdout = %q, want compact status layout without %q", got, unwanted)
 		}
 	}
 }
@@ -588,15 +653,12 @@ func TestStatusCommandPreservesCachedMetadataOnRateLimit(t *testing.T) {
 	for _, want := range []string{
 		"PLAN",
 		"team",
-		"5H used",
+		"5H USED",
 		"100%",
-		"5H left",
 		"0%",
-		"5H reset",
-		"4h 54m (at 2026-03-24 11:10)",
-		"Weekly reset",
-		"6d 12h (at 2026-03-30 01:59)",
-		"SRC LIVE",
+		"4h 54m",
+		"6d 12h",
+		"live",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("stdout = %q, want %q", got, want)
@@ -607,16 +669,146 @@ func TestStatusCommandPreservesCachedMetadataOnRateLimit(t *testing.T) {
 	}
 }
 
+func TestStatusCommandReusesFreshCacheAfterList(t *testing.T) {
+	dir := t.TempDir()
+	profilesDir := filepath.Join(dir, "profiles")
+	cfgPath := filepath.Join(dir, "config.toml")
+
+	store := profile.NewStore(profilesDir)
+	writeProfile(t, store, "work", []byte(`{"tokens":{"access_token":"work-token","account_id":"acct-work"}}`))
+	cfg := config.Default()
+	cfg.ActiveProfile = "work"
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	now := time.Date(2026, 3, 24, 9, 0, 0, 0, time.UTC)
+	useTimeNow(t, func() time.Time { return now })
+
+	calls := 0
+	useQuotaChecker(t, func(_ context.Context, _ quota.Tokens, _ string) (quota.Snapshot, error) {
+		calls++
+		return quota.Snapshot{
+			Plan:                 "team",
+			PrimaryUsedPercent:   21,
+			SecondaryUsedPercent: 88,
+			PrimaryResetAfter:    4*time.Hour + 54*time.Minute,
+			SecondaryResetAfter:  6*24*time.Hour + 12*time.Hour,
+		}, nil
+	})
+
+	listStdout := &bytes.Buffer{}
+	listCmd := NewRootCommand(Dependencies{
+		ConfigPath:  cfgPath,
+		ProfilesDir: profilesDir,
+		Stdout:      listStdout,
+	})
+	listCmd.SetArgs([]string{"list"})
+
+	if err := listCmd.Execute(); err != nil {
+		t.Fatalf("list Execute() error = %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("quota calls after list = %d, want 1", calls)
+	}
+
+	now = now.Add(30 * time.Second)
+
+	statusStdout := &bytes.Buffer{}
+	statusCmd := NewRootCommand(Dependencies{
+		ConfigPath:  cfgPath,
+		ProfilesDir: profilesDir,
+		Stdout:      statusStdout,
+	})
+	statusCmd.SetArgs([]string{"status"})
+
+	if err := statusCmd.Execute(); err != nil {
+		t.Fatalf("status Execute() error = %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("quota calls after status = %d, want fresh cache reuse", calls)
+	}
+	for _, want := range []string{"Status", "work", "team", "21%", "88%", "cache"} {
+		if !strings.Contains(statusStdout.String(), want) {
+			t.Fatalf("status stdout = %q, want %q", statusStdout.String(), want)
+		}
+	}
+}
+
+func TestStatusCommandRefreshesAfterFreshWindowExpires(t *testing.T) {
+	dir := t.TempDir()
+	profilesDir := filepath.Join(dir, "profiles")
+	cfgPath := filepath.Join(dir, "config.toml")
+
+	store := profile.NewStore(profilesDir)
+	writeProfile(t, store, "work", []byte(`{"tokens":{"access_token":"work-token","account_id":"acct-work"}}`))
+	cfg := config.Default()
+	cfg.ActiveProfile = "work"
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	now := time.Date(2026, 3, 24, 9, 0, 0, 0, time.UTC)
+	useTimeNow(t, func() time.Time { return now })
+
+	calls := 0
+	useQuotaChecker(t, func(_ context.Context, _ quota.Tokens, _ string) (quota.Snapshot, error) {
+		calls++
+		return quota.Snapshot{
+			Plan:                 "plus",
+			PrimaryUsedPercent:   9,
+			SecondaryUsedPercent: 19,
+			PrimaryResetAfter:    3 * time.Hour,
+			SecondaryResetAfter:  2 * 24 * time.Hour,
+		}, nil
+	})
+
+	listCmd := NewRootCommand(Dependencies{
+		ConfigPath:  cfgPath,
+		ProfilesDir: profilesDir,
+		Stdout:      &bytes.Buffer{},
+	})
+	listCmd.SetArgs([]string{"list"})
+
+	if err := listCmd.Execute(); err != nil {
+		t.Fatalf("list Execute() error = %v", err)
+	}
+
+	now = now.Add(time.Minute + time.Second)
+
+	statusCmd := NewRootCommand(Dependencies{
+		ConfigPath:  cfgPath,
+		ProfilesDir: profilesDir,
+		Stdout:      &bytes.Buffer{},
+	})
+	statusCmd.SetArgs([]string{"status"})
+
+	if err := statusCmd.Execute(); err != nil {
+		t.Fatalf("status Execute() error = %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("quota calls = %d, want refresh after freshness window expires", calls)
+	}
+}
+
 func TestRenderStatusShowsFriendlyEmptyStates(t *testing.T) {
 	var out bytes.Buffer
 
 	renderStatus(&out, statusSummary{
-		activeName:     "solo",
-		activeSnapshot: quota.Snapshot{Plan: "plus", PrimaryUsedPercent: 12, SecondaryUsedPercent: 34},
-		activeSource:   quotaSourceLive,
-		totalProfiles:  1,
-		autoCheck:      true,
-		checkModel:     "gpt-5.4-mini",
+		activeName:    "solo",
+		totalProfiles: 1,
+		autoCheck:     true,
+		checkModel:    "gpt-5.4-mini",
+		rows: []listRow{{
+			name:   "solo",
+			source: quotaSourceLive,
+			active: true,
+			snapshot: quota.Snapshot{
+				Plan:                 "plus",
+				PrimaryUsedPercent:   12,
+				SecondaryUsedPercent: 34,
+			},
+		}},
 		watch: statusWatchSummary{
 			mode:               "manual foreground",
 			notify:             true,
@@ -629,12 +821,11 @@ func TestRenderStatusShowsFriendlyEmptyStates(t *testing.T) {
 	for _, want := range []string{
 		"ACTIVE",
 		"solo",
-		"Quota",
-		"Watch",
-		"No watch history yet",
-		"Recent Switch",
+		"NAME",
+		"Watch:",
+		"history none",
+		"Recent Switch:",
 		"No auto-switch recorded yet",
-		"Profiles",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("renderStatus() = %q, want %q", got, want)
@@ -719,6 +910,13 @@ func useQuotaChecker(t *testing.T, checker func(context.Context, quota.Tokens, s
 	orig := quotaCheckerFactory
 	quotaCheckerFactory = func() quotaChecker { return quotaCheckerFunc(checker) }
 	t.Cleanup(func() { quotaCheckerFactory = orig })
+}
+
+func useTimeNow(t *testing.T, now func() time.Time) {
+	t.Helper()
+	orig := timeNow
+	timeNow = now
+	t.Cleanup(func() { timeNow = orig })
 }
 
 func useTerminalDetector(t *testing.T, detector func(*os.File) bool) {
@@ -935,6 +1133,93 @@ func TestUseCommandWithoutArgsUsesInteractiveSelector(t *testing.T) {
 	}
 	if got := stdout.String(); !strings.Contains(got, "active profile: beta") {
 		t.Fatalf("stdout = %q, want confirmation line", got)
+	}
+}
+
+func TestUseCommandWithoutArgsReusesFreshCacheAfterList(t *testing.T) {
+	dir := t.TempDir()
+	profilesDir := filepath.Join(dir, "profiles")
+	authPath := filepath.Join(dir, "auth.json")
+	cfgPath := filepath.Join(dir, "config.toml")
+
+	store := profile.NewStore(profilesDir)
+	alphaRaw := []byte(`{"auth_mode":"chatgpt","tokens":{"access_token":"alpha-token","account_id":"acct-alpha"}}`)
+	betaRaw := []byte(`{"auth_mode":"chatgpt","tokens":{"access_token":"beta-token","account_id":"acct-beta"}}`)
+	writeProfile(t, store, "alpha", alphaRaw)
+	writeProfile(t, store, "beta", betaRaw)
+	cfg := config.Default()
+	cfg.ActiveProfile = "alpha"
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	useTerminalDetector(t, func(_ *os.File) bool { return true })
+
+	now := time.Date(2026, 3, 24, 9, 0, 0, 0, time.UTC)
+	useTimeNow(t, func() time.Time { return now })
+
+	calls := 0
+	useQuotaChecker(t, func(_ context.Context, tokens quota.Tokens, _ string) (quota.Snapshot, error) {
+		calls++
+		switch tokens.AccessToken {
+		case "alpha-token":
+			return quota.Snapshot{Plan: "plus", PrimaryUsedPercent: 8, SecondaryUsedPercent: 89}, nil
+		case "beta-token":
+			return quota.Snapshot{Plan: "team", PrimaryUsedPercent: 3, SecondaryUsedPercent: 31}, nil
+		default:
+			t.Fatalf("unexpected access token %q", tokens.AccessToken)
+			return quota.Snapshot{}, nil
+		}
+	})
+
+	listCmd := NewRootCommand(Dependencies{
+		ConfigPath:  cfgPath,
+		ProfilesDir: profilesDir,
+		Stdout:      &bytes.Buffer{},
+	})
+	listCmd.SetArgs([]string{"list"})
+
+	if err := listCmd.Execute(); err != nil {
+		t.Fatalf("list Execute() error = %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("quota calls after list = %d, want 2", calls)
+	}
+
+	now = now.Add(30 * time.Second)
+
+	var captured []listRow
+	useInteractiveSelector(t, func(_ *os.File, _ io.Writer, rows []listRow) (string, error) {
+		captured = append([]listRow(nil), rows...)
+		return "beta", nil
+	})
+
+	input, err := os.CreateTemp(t.TempDir(), "stdin")
+	if err != nil {
+		t.Fatalf("CreateTemp() error = %v", err)
+	}
+	t.Cleanup(func() { _ = input.Close() })
+
+	useCmd := NewRootCommand(Dependencies{
+		ConfigPath:  cfgPath,
+		ProfilesDir: profilesDir,
+		AuthPath:    authPath,
+		Stdout:      &bytes.Buffer{},
+		Stdin:       input,
+	})
+	useCmd.SetArgs([]string{"use"})
+
+	if err := useCmd.Execute(); err != nil {
+		t.Fatalf("use Execute() error = %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("quota calls after use = %d, want fresh cache reuse", calls)
+	}
+	if len(captured) != 2 {
+		t.Fatalf("captured rows = %#v, want 2 rows", captured)
+	}
+	if captured[0].source != quotaSourceCache || captured[1].source != quotaSourceCache {
+		t.Fatalf("captured rows = %#v, want cache source markers after reuse", captured)
 	}
 }
 

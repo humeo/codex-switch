@@ -34,6 +34,7 @@ type QuotaCache struct {
 	SecondaryResetAt           time.Time `toml:"secondary_reset_at"`
 	HasCredits                 bool      `toml:"has_credits"`
 	CreditsBalance             string    `toml:"credits_balance"`
+	CheckedAt                  time.Time `toml:"checked_at"`
 }
 
 func Default() Config {
